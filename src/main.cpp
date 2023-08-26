@@ -46,6 +46,17 @@ const uint8_t dR[] = { //all data Rates are in Hz
   12, //7.68k
 };
 
+const uint8_t gF_LU240Hz[] = { //gyro filter bandwidth look up table (240Hz)
+  0,  //96
+  1,  //96
+  2,  //96
+  3,  //96
+  4,  //78.4
+  5,  //53
+  6,  //27.3
+  7,  //14.2
+};
+
 void setup() {
   Serial.begin(115200);
   SPI.begin();
@@ -66,7 +77,6 @@ void setup() {
 void regularSetup(int dataRSet){
   // Configure FS of the acc and gyro
   AccGyr.Write_Reg(0x01, 0b00000000 + 0b00000000); //disable the embed reg access
-  //status |= AccGyr.Set_X_ODR(SENSOR_ODR);
   status |= AccGyr.Set_X_FS(ACC_FS);
   status |= AccGyr.Set_G_FS(GYR_FS);
 
@@ -75,12 +85,10 @@ void regularSetup(int dataRSet){
   
   // Configure FIFO BDR for acc and gyro
   AccGyr.Write_Reg(0x09, (dR[dataRSet]<<4) + dR[dataRSet]); //setting the Batch data rate for Gyro and Acc to 240Hz
-  //status |= AccGyr.FIFO_Set_X_BDR(SENSOR_ODR);
-  //status |= AccGyr.FIFO_Set_G_BDR(SENSOR_ODR);
 
-  // Setting the filter
+  // Setting the filters
   AccGyr.Set_X_Filter_Mode(0,7);
-  AccGyr.Set_G_Filter_Mode(1,7);
+  AccGyr.Write_Reg(0x15, (gF_LU240Hz[4]<<4));  //setting the gyroscope lp filter bandwidth
 
   // Set FIFO in Continuous mode
   status |= AccGyr.FIFO_Set_Mode(LSM6DSV16X_STREAM_MODE);
@@ -97,6 +105,7 @@ void gameSetup(){
   AccGyr.Set_X_Filter_Mode(0,7);
   AccGyr.Set_G_Filter_Mode(1,7);
   
+
   AccGyr.Write_Reg(0x01, 0b00000000 + 0b10000000); //enable the embed reg access
   AccGyr.Write_Reg(0x02, 0b00000001 + 0b00000000); //turning page to embed page
   status |= AccGyr.Write_Reg(0x04, 0b00000010); //set the SFLP_game_EN bit in the EMB_FUNC_EN_A reg
@@ -183,8 +192,8 @@ void getFifoData(int16_t quatData[]){
 void get_AccGyro(uint8_t gameData[]){
   int32_t gyroVal[3], accVal[3];
 
-  AccGyr.FIFO_Get_X_Axes(accVal); Serial.print(" AccX:"); Serial.print(accVal[0]);  Serial.print(" AccY:"); Serial.print(accVal[1]);  Serial.print(" AccZ:"); Serial.println(accVal[2]);
-  //AccGyr.FIFO_Get_G_Axes(gyroVal); Serial.print(" GyrX:");  Serial.print(gyroVal[0]); Serial.print(" GyrY:");  Serial.print(gyroVal[1]); Serial.print(" GyrZ:");  Serial.println(gyroVal[2]);
+  //AccGyr.FIFO_Get_X_Axes(accVal); Serial.print(" AccX:"); Serial.print(accVal[0]);  Serial.print(" AccY:"); Serial.print(accVal[1]);  Serial.print(" AccZ:"); Serial.println(accVal[2]);
+  AccGyr.FIFO_Get_G_Axes(gyroVal); Serial.print(" GyrX:");  Serial.print(gyroVal[0]); Serial.print(" GyrY:");  Serial.print(gyroVal[1]); Serial.print(" GyrZ:");  Serial.println(gyroVal[2]);
   
   
 }
