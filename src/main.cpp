@@ -238,26 +238,30 @@ void getGyrRaw(){
 void quatToEuler(int16_t q[]){
   float eulerResult[3];
   float eulerDegrees[3];
+  int16_t quatDat[4];
 
-  //q[0] = 18733; q[1] = -6621; q[2] = -16993;  q[3] = -1;
-  q[3] = 1;
+  quatDat[0] = 1;
+  quatDat[1] = q[0];  quatDat[2] = q[1]; quatDat [4] = q[2];
+  
   //Roll calculation
-  eulerResult[0] = atan2( ( 2*(q[0]*q[1] + (q[2]*q[3]) ) ) , (sq(q[0]) + sq(q[3]) - sq(q[1]) - sq(q[2])) ); //you can't square numbers like this "x^2", this is just "x+2" in c
+  eulerResult[0] = atan2( ( 2*(quatDat[0]*quatDat[1] + (quatDat[2]*quatDat[3]) ) ) 
+  , (sq(quatDat[0]) + sq(quatDat[3]) - sq(quatDat[1]) - sq(quatDat[2])) ); //you can't square numbers like this "x^2", this is just "x+2" in c
 
   //Pitch calculation
-  eulerResult[1] =  asin(    2*((q[0]*q[2])-(q[1]*q[3])) );
+  eulerResult[1] =  asin(    2*((quatDat[0]*quatDat[2])-(quatDat[1]*quatDat[3])) );
 
   //Yaw calculation
-  eulerResult[2] =  atan2(   (2*(q[0]*q[3]+(q[1]*q[2]))) , (sq(q[0])+sq(q[1])-sq(q[2])-sq(q[3])) );
+  eulerResult[2] =  atan2(   (2*(quatDat[0]*quatDat[3]+(quatDat[1]*quatDat[2]))) ,
+   (sq(quatDat[0])+sq(quatDat[1])-sq(quatDat[2])-sq(quatDat[3])) );
 
   //Conversion to degrees
   for(uint8_t i = 0; i < 3; i++)
   {
-    eulerDegrees[i] = (float)eulerResult[0] * (float)(180/3.14);  
+    eulerDegrees[i] = (float)eulerResult[i] * (float)(180/3.14);  
   }
 
-  Serial.print("Roll (radians):"); Serial.print(eulerResult[0]);  Serial.print(" Pitch (radians):"); Serial.print(eulerResult[1]); Serial.print(" Yaw (radians):"); Serial.println(eulerResult[2]);
-  //Serial.print("Roll (degrees):"); Serial.print(eulerDegrees[0]);  Serial.print(" Pitch (degrees):"); Serial.print(eulerDegrees[1]); Serial.print(" Yaw (degrees):"); Serial.println(eulerDegrees[2]);
+  //Serial.print("Roll (radians):"); Serial.print(eulerResult[0]);  Serial.print(" Pitch (radians):"); Serial.print(eulerResult[1]); Serial.print(" Yaw (radians):"); Serial.println(eulerResult[2]);
+  Serial.print("Roll (degrees):"); Serial.print(eulerDegrees[0]);  Serial.print(" Pitch (degrees):"); Serial.print(eulerDegrees[1]); Serial.print(" Yaw (degrees):"); Serial.println(eulerDegrees[2]);
 }
 
 void loop() {
