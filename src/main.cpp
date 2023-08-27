@@ -25,6 +25,7 @@ int32_t gyr_value[3];
 char buff[FLASH_BUFF_LEN];
 uint32_t pos = 0;
 
+void prereqSetup(int dataRSet);
 void regularSetup(int dataRSet);
 void gameSetup();
 
@@ -62,19 +63,21 @@ void setup() {
   SPI.begin();
 
   uint8_t dRSet = 7;
-  // Initialize LSM6DSV16X.
-  AccGyr.begin();
+  prereqSetup(dRSet);
   
-  //status |= AccGyr.Enable_X();
-  AccGyr.Write_Reg(0x10, dR[dRSet] + 0b00010000); //enable acc by setting the odr (240Hz) and setting to high acc ODR mode
-  //status |= AccGyr.Enable_G();
-  AccGyr.Write_Reg(0x11, dR[dRSet] + 0b00010000); //enable gyro by setting the odr (240Hz) and setting to high acc ODR mode
-
   //gameSetup();
   regularSetup(dRSet);
 }
 
-void regularSetup(int dataRSet){
+void prereqSetup(int dataRSet){
+  // Initialize LSM6DSV16X.
+  AccGyr.begin();
+  
+  //status |= AccGyr.Enable_X();
+  AccGyr.Write_Reg(0x10, dR[dataRSet] + 0b00010000); //enable acc by setting the odr (240Hz) and setting to high acc ODR mode
+  //status |= AccGyr.Enable_G();
+  AccGyr.Write_Reg(0x11, dR[dataRSet] + 0b00010000); //enable gyro by setting the odr (240Hz) and setting to high acc ODR mode
+
   // Configure FS of the acc and gyro
   AccGyr.Write_Reg(0x01, 0b00000000 + 0b00000000); //disable the embed reg access
   status |= AccGyr.Set_X_FS(ACC_FS);
@@ -82,13 +85,16 @@ void regularSetup(int dataRSet){
 
   // Setting the output data rate
   AccGyr.Write_Reg(0x62, 0b00);  //setting the high acc ODR data rate
-  
-  // Configure FIFO BDR for acc and gyro
-  AccGyr.Write_Reg(0x09, (dR[dataRSet]<<4) + dR[dataRSet]); //setting the Batch data rate for Gyro and Acc to 240Hz
 
   // Setting the filters
   AccGyr.Set_X_Filter_Mode(0,7);
   AccGyr.Write_Reg(0x15, (gF_LU240Hz[4]<<4));  //setting the gyroscope lp filter bandwidth
+}
+
+void regularSetup(int dataRSet){
+  
+  // Configure FIFO BDR for acc and gyro
+  AccGyr.Write_Reg(0x09, (dR[dataRSet]<<4) + dR[dataRSet]); //setting the Batch data rate for Gyro and Acc to 240Hz
 
   // Set FIFO in Continuous mode
   status |= AccGyr.FIFO_Set_Mode(LSM6DSV16X_STREAM_MODE);
@@ -101,10 +107,8 @@ void regularSetup(int dataRSet){
 }
 
 void gameSetup(){
-  //setting the filter
-  AccGyr.Set_X_Filter_Mode(0,7);
-  AccGyr.Set_G_Filter_Mode(1,7);
-  
+  // Setting the output data rate
+  AccGyr.Write_Reg(0x62, 0b00);  //setting the high acc ODR data rate
 
   AccGyr.Write_Reg(0x01, 0b00000000 + 0b10000000); //enable the embed reg access
   AccGyr.Write_Reg(0x02, 0b00000001 + 0b00000000); //turning page to embed page
@@ -117,11 +121,6 @@ void gameSetup(){
 
   // Configure ODR and FS of the acc and gyro
   AccGyr.Write_Reg(0x01, 0b00000000 + 0b00000000); //disable the embed reg access
-  //status |= AccGyr.Set_X_ODR(SENSOR_ODR);
-  //status |= AccGyr.Set_X_FS(ACC_FS);
-  //status |= AccGyr.Set_G_ODR(SENSOR_ODR);
-  //status |= AccGyr.Set_G_FS(GYR_FS);
-  
   
   // Set FIFO in Continuous mode
   status |= AccGyr.FIFO_Set_Mode(LSM6DSV16X_STREAM_MODE);
