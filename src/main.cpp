@@ -9,21 +9,26 @@
 #define FIFO_SAMPLE_THRESHOLD 199
 #define FLASH_BUFF_LEN 8192
 
-#define CS_PIN 25
-#define SPI_MOSI  11
-#define SPI_MISO  12
+
+uint8_t CS_PIN  = 17;
+//17,18 for the breadboard, 18 for the PCB
+#define SPI_MOSI  12
+#define SPI_MISO  11
 #define SPI_SCK 13
 
 LSM6DSV16XSensor AccGyr(&SPI, CS_PIN);
 uint8_t status = 0;
+int16_t firstFrame[3];
+uint8_t xRangeGlobal;
 
-void prereqSetup(uint8_t dataRSet, uint8_t gyroFiltS, uint8_t accFiltS, uint8_t xRange, uint8_t gRangeS);
+void prereqSetup(uint8_t dataRSet, uint8_t gyroFiltS, uint8_t accFiltS, uint8_t xRange, uint8_t gRangeS, uint8_t csPin);
 void regularSetup(int dataRSet);
 void gameSetup(int gameODRSet);
+void getFifoData(int16_t quatData[], int chipS_Pin);
 
 //const arrays to store values
 
-const uint8_t dR[] = { //all data Rates are in Hz
+const uint8_t dR[] = { //acc and gyro data Rates (Hz)
   0,  //off
   1,  //1.875
   2,  //7.5
@@ -31,7 +36,7 @@ const uint8_t dR[] = { //all data Rates are in Hz
   4,  //30
   5,  //60
   6,  //120
-  7,  //240
+  7,  //240 low power/high performance
   8,  //480
   9,  //960
   10, //1.92k
@@ -77,6 +82,13 @@ const uint8_t accRange[] = {  //the comments below represent the range and decim
   3   //+16g, 2048
 };
 
+  const uint16_t accSen[] = {  //accelerometer sensitivity
+    16384,  //+2g, 16384
+    8192,   //+4g, 8192
+    4096,   //+8g, 4096
+    2048    //+16g, 2048
+  };
+
 const uint8_t gyrRange[] = {  //the comments below represent the range (in dps)
   0b0000, //125
   0b0001, //250
@@ -86,28 +98,44 @@ const uint8_t gyrRange[] = {  //the comments below represent the range (in dps)
   0b1100  //4000
 };
 
+const uint8_t indexIMUs[] = {
+  17,
+  18,
+  19
+};
+
 void setup() {
   uint8_t dRSet = 7;    //gyr and acc output data rate choice (refer to dR[])
   uint8_t gODRSet = 3;  //game vector output data rate choice (refer to gameODR[])
   uint8_t gFiltSetting = 4, xFiltSetting = 5; //gyro and acc filter bandwidth selection (refer to gF_LU240Hz[] and aF_LU_HP[])
-  uint8_t xRangeS = 1, gRangeS = 2; //acc and gyro range setting (refer to accRange[] and gyrRange[])
+  uint8_t xRangeS = 2, gRangeS = 4; //acc and gyro range setting (refer to accRange[] and gyrRange[])
+  uint8_t csPin = 18;
 
-  Serial.begin(115200);
+  xRangeGlobal = xRangeS;
+
+  Serial.begin(120000);
   SPI.begin();
 
-  prereqSetup(dRSet, gFiltSetting, xFiltSetting, xRangeS, gRangeS);
+  Serial.println("Setting up systems....");
+
+  for(char i = 0; i <= sizeof(indexIMUs); i++)
+  {
+    AccGyr.cs_pin = indexIMUs[i]; //changing the cs_pin from within the header file, made the cs_pin variable public
+    prereqSetup(dRSet, gFiltSetting, xFiltSetting, xRangeS, gRangeS, csPin);
+    
+    gameSetup(gODRSet); //setup game
+    delay(1);
+  }
   
-  gameSetup(gODRSet);
-  //regularSetup(dRSet);
 }
 
 void prereqSetup(uint8_t dataRSet, uint8_t gyroFiltS, uint8_t accFiltS, uint8_t xRangeS,
-uint8_t gRangeS){ //setup required for both game vector or acc & gyro only mode
+uint8_t gRangeS, uint8_t csPin){ //setup required for both game vector or acc & gyro only mode
   // Initialize LSM6DSV16X.
   AccGyr.begin();
 
-  AccGyr.Write_Reg(0x10, dR[dataRSet] + 0b00010000); //enable acc by setting the odr (240Hz) and setting to high acc ODR mode
-  AccGyr.Write_Reg(0x11, dR[dataRSet] + 0b00010000); //enable gyro by setting the odr (240Hz) and setting to high acc ODR mode
+  AccGyr.Write_Reg(0x10, dR[dataRSet] + 0b00010000); //enable acc by setting the odr and setting to high acc ODR mode
+  AccGyr.Write_Reg(0x11, dR[dataRSet] + 0b00010000); //enable gyro by setting the odr and setting to high acc ODR mode
 
   // Setting the output data rate configuration register for HAODR
   AccGyr.Write_Reg(0x62, 0b00);  //setting the high acc ODR data rate
@@ -136,12 +164,14 @@ void regularSetup(int dataRSet){  //to setup only the acc and gyr
   Serial.println("LSM6DSV16X FIFO Demo");
 }
 
+
 void gameSetup(int gameODRSet){
   AccGyr.Write_Reg(0x01, 0b00000000 + 0b10000000); //enable the embed reg access
   AccGyr.Write_Reg(0x02, 0b00000001 + 0b00000000); //turning page to embed page
   status |= AccGyr.Write_Reg(0x04, 0b00000010); //set the SFLP_game_EN bit in the EMB_FUNC_EN_A reg
   status |= AccGyr.Write_Reg(0x5E, 0b01000011 + (gameODR[gameODRSet]<<3)); //sflp odr set
   status |= AccGyr.Write_Reg(0x66, 0b00000010); //sflp initialisation request
+  
   //status |= AccGyr.Write_Reg(0x44, 0b00000010); //enable sflp game rotation vector batching to fifo
   status |= AccGyr.Write_Reg(0x44, 0b00010000); //enable sflp gravity vector batching to fifo
   //status |= AccGyr.Write_Reg(0x44, 0b00100000); //enable sflp gyroscope bias vector batching to fifo
@@ -183,21 +213,26 @@ void unityDataPrep(int16_t gameArr[]){
   
 }
 
-void getFifoData(int16_t quatData[]){
+void getFifoData(int16_t quatData[], int chipS_Pin){
+  AccGyr.cs_pin = chipS_Pin;
+  delayMicroseconds(3);
   uint8_t temp[6], startAddr = 0x79;
+  float quatFloat[3];
   
   AccGyr.Write_Reg(0x01, 0b00000000 + 0b00000000); //disable the embed reg access
   
 
   for(uint8_t j = 0; j < 3; j++)
   {
-    for(uint8_t i = 0; i < 6; i ++)
+    for(uint8_t i = 0; i < 6; i++)
     {
       AccGyr.Read_Reg(startAddr + i, &temp[i]);
     }
     quatData[j] = (uint16_t)(temp[j*2+1]<<8) + (uint16_t)temp[j*2];
+    //quatFloat[j] = (float)quatData[j]/65536.0;
   }
-  //Serial.print("Quat X: "); Serial.print(quatData[0]); Serial.print(" Quat Y: "); Serial.print(quatData[1]); Serial.print(" Quat Z: "); Serial.println(quatData[2]); 
+  //Serial.print("Quat X: "); Serial.print(quatData[0]); Serial.print(" Quat Y: "); Serial.print(quatData[1]); Serial.print(" Quat Z: "); Serial.println(quatData[2]);
+  //Serial.print(quatData[0]); Serial.print("  "); Serial.print(quatData[1]); Serial.print("  "); Serial.println(quatData[2]); 
 }
 
 void getAccRaw(){
@@ -235,46 +270,86 @@ void getGyrRaw(){
   Serial.print("     Gyr X: ");  Serial.print(gyrData[0]); Serial.print("   Gyr Y: ");  Serial.print(gyrData[1]);  Serial.print("   Gyr Z: ");  Serial.println(gyrData[2]);     
 }
 
-void quatToEuler(int16_t q[]){
-  float eulerResult[3];
-  float eulerDegrees[3];
-  int16_t quatDat[4];
-
-  quatDat[0] = 1;
-  quatDat[1] = q[0];  quatDat[2] = q[1]; quatDat [4] = q[2];
-  
-  //Roll calculation
-  eulerResult[0] = atan2( ( 2*(quatDat[0]*quatDat[1] + (quatDat[2]*quatDat[3]) ) ) 
-  , (sq(quatDat[0]) + sq(quatDat[3]) - sq(quatDat[1]) - sq(quatDat[2])) ); //you can't square numbers like this "x^2", this is just "x+2" in c
-
-  //Pitch calculation
-  eulerResult[1] =  asin(    2*((quatDat[0]*quatDat[2])-(quatDat[1]*quatDat[3])) );
-
-  //Yaw calculation
-  eulerResult[2] =  atan2(   (2*(quatDat[0]*quatDat[3]+(quatDat[1]*quatDat[2]))) ,
-   (sq(quatDat[0])+sq(quatDat[1])-sq(quatDat[2])-sq(quatDat[3])) );
-
-  //Conversion to degrees
-  for(uint8_t i = 0; i < 3; i++)
-  {
-    eulerDegrees[i] = (float)eulerResult[i] * (float)(180/3.14);  
-  }
-
-  //Serial.print("Roll (radians):"); Serial.print(eulerResult[0]);  Serial.print(" Pitch (radians):"); Serial.print(eulerResult[1]); Serial.print(" Yaw (radians):"); Serial.println(eulerResult[2]);
-  Serial.print("Roll (degrees):"); Serial.print(eulerDegrees[0]);  Serial.print(" Pitch (degrees):"); Serial.print(eulerDegrees[1]); Serial.print(" Yaw (degrees):"); Serial.println(eulerDegrees[2]);
+float calculate3DVecAngle(float vecA[], float vecB[]){ //calculates the angle in degrees between two vectors
+  double result = atan2(vecA[1],vecA[0]) - atan2(vecB[1],vecB[0]);
+  float degrees = result*(180.0/3.14);
+  if(degrees < 0){ degrees = 360 + degrees; } //if in the 4th quadrant, add to 360 to get the correct angle
+  return degrees;
 }
+
+void gravityVecToEuler(int16_t quatData[], uint8_t index, float output[][2]){ //uses the gravity vector to calculate euler angles
+  float gravValue = 16384;
+  float pitchTheta, rollTheta;
+  float zAxisVec[3] = {0,gravValue};
+
+  //value from the gravity vector will be masked to see changes across the y-z (pitch) and x-z (roll) plane
+  float gravVectorPitch[3] = {quatData[1],quatData[2]}; //zeroing the x axis to see changes across the y-z plane
+  float gravVectorRoll[3] = {quatData[0],quatData[2]};  //zeroing the y axis to see changes across the x-z plane
+  
+  //calculating the angle between the vector and each axis to get pitch and roll
+  //calculating pitch (rotation around x axis/ change across the y and z axis)  
+  pitchTheta = calculate3DVecAngle(gravVectorPitch, zAxisVec); 
+  
+  //calculating roll (rotation around y axis/ change across the x and z axis)
+  rollTheta = calculate3DVecAngle(gravVectorRoll, zAxisVec);
+
+  output[index][0] = pitchTheta;  output[index][1] = rollTheta;
+
+  //Serial.print(" Pitch angle: ");  Serial.print(pitchTheta); Serial.print(" Roll angle: ");  Serial.println(rollTheta); Serial.println("");
+}
+
+void calculateJointAng(float input[][2], uint8_t imu1, uint8_t imu2, float result[]){ //calculates the angle between two adjacent IMUs
+  //get the pitch and yaw for the two IMUs
+  float pitch1 = input[imu1][0], roll1 = input[imu1][1],
+  pitch2 = input[imu2][0], roll2 = input[imu2][1];
+
+  //subtract the angles and put it into the return values
+    //calculating pitch
+    if(pitch1 > pitch2)
+    {
+      result[0] = 360 - pitch1 + pitch2;
+    }
+    else if(pitch1 < pitch2)
+    {
+      result[0] = pitch2 - pitch1;
+    }
+
+    //calculating roll
+    if(roll1 > roll2)
+    {
+      result[1] = 360 - roll1 + roll2;
+    }
+    else if(roll1 < roll2)
+    {
+      result[1] = roll2 - roll1;
+    }
+    
+  //Serial.print("Pitch D: ");  Serial.print(result[0]);  Serial.print(" Roll D: ");  Serial.println(result[1]);
+  Serial.print(imu1);  Serial.print(" ");  Serial.print(imu2);  Serial.print(" "); Serial.print(result[0]);  Serial.print(" ");  Serial.println(result[1]);
+}
+
+
 
 void loop() {
   uint8_t gameData[6];
-  int16_t eulerAng[3], quat[4];
+  int16_t eulerAng[3], fifoOut[4];
+  float outVals[32][2], jointAng[2];
 
   //checkGameRegs();
 
   //===Functions for game====
   //
-  getFifoData(quat);
+  for(int i = 0; i < indexIMUs[i]; i++)
+  {
+    //Serial.print("CS: "); Serial.println(i, DEC);
+    getFifoData(fifoOut, indexIMUs[i]);  gravityVecToEuler(fifoOut, indexIMUs[i], outVals);
+  }
+  calculateJointAng(outVals, indexIMUs[0], indexIMUs[0+1], jointAng);
+  //calculateJointAng(outVals, 18, 19, jointAng);
+
   //unityDataPrep(quat);
-  quatToEuler(quat);
+  //quatToEuler(quat);
+  //quat2EulerManual(quat);
   //delay(1);
   //
   //=========================
