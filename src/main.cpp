@@ -2,25 +2,11 @@
 #include <math.h>
 #include <SPI.h>
 
-#define SENSOR_ODR 120.0f // In Hertz
-#define ACC_FS 2 // In g
-#define GYR_FS 4000 // In dps
-//FS is range
-#define MEASUREMENT_TIME_INTERVAL (1000.0f/SENSOR_ODR) // In ms
-#define FIFO_SAMPLE_THRESHOLD 199
-#define FLASH_BUFF_LEN 8192
-
-
 uint8_t CS_PIN  = 17;
 //17,18 for the breadboard, 18 for the PCB
 #define SPI_MOSI  12
 #define SPI_MISO  11
 #define SPI_SCK 13
-
-#define chipSelect 4 //BO_00 pin name
-#define readSensor 1
-#define writeSensor 0
-SPISettings settingsA(1000000, MSBFIRST, SPI_MODE1);
 
 LSM6DSV16XSensor AccGyr(&SPI, CS_PIN);
 uint8_t status = 0;
@@ -116,13 +102,18 @@ typedef struct{
 
 //CS1 is the tip of the finger, CS2 is the middle, CS3 is the base
 
+enum fingerNumbers{THUMB, INDEX, MIDDLE, RING, PINKIE, PALM};
+
+enum imuLOCATION{TIP, MID, BASE};
+
 imuDetails thumb = {{38,36,37},"Thumb: "};
 imuDetails indexFinger = {{27,29,28},"Index: "};
 imuDetails middle = {{8,10,9},"Middle: "};
 imuDetails ring = {{2,4,3},"Ring: "};
 imuDetails pinkie = {{17,0,16},"Pinkie: "};
+imuDetails palm = {{18,17,17},"Palm: "};
 
-imuDetails imuArr[] = {thumb,indexFinger,middle,ring,pinkie};
+imuDetails imuArr[] = {thumb,indexFinger,middle,ring,pinkie,palm};
 
 typedef struct jointAngle{
   const uint8_t adjacentIMU_cs[2]; //the two IMUs that form the specific joint
@@ -130,10 +121,32 @@ typedef struct jointAngle{
   uint16_t angle;
 }jointAngle;
 
-jointAngle thumbDIP = {{thumb.imuCS_pins[0],thumb.imuCS_pins[1]}, "thumb DIP", 0};
-jointAngle thumbPIP = {{thumb.imuCS_pins[1],thumb.imuCS_pins[2]}, "thumb PIP", 0};
-jointAngle indexDIP = {{indexFinger.imuCS_pins[0],indexFinger.imuCS_pins[1]}, "index DIP", 0};
-jointAngle indexPIP = {{indexFinger.imuCS_pins[1],indexFinger.imuCS_pins[2]}, "index PIP", 0};
+jointAngle thumbDIP = {{thumb.imuCS_pins[0],thumb.imuCS_pins[1]}, "thumb DIP : ", 0};
+jointAngle thumbPIP = {{thumb.imuCS_pins[1],thumb.imuCS_pins[2]}, "thumb PIP : ", 0};
+jointAngle thumbMCP = {{thumb.imuCS_pins[2],palm.imuCS_pins[0]}, "thumb MCP : ", 0};
+
+jointAngle indexDIP = {{indexFinger.imuCS_pins[0],indexFinger.imuCS_pins[1]}, "index DIP : ", 0};
+jointAngle indexPIP = {{indexFinger.imuCS_pins[1],indexFinger.imuCS_pins[2]}, "index PIP : ", 0};
+jointAngle indexMCP = {{indexFinger.imuCS_pins[2],palm.imuCS_pins[0]}, "index MCP : ", 0};
+
+jointAngle middleDIP = {{middle.imuCS_pins[0],middle.imuCS_pins[1]}, "middle DIP: ", 0};
+jointAngle middlePIP = {{middle.imuCS_pins[1],middle.imuCS_pins[2]}, "middle PIP: ", 0};
+jointAngle middleMCP = {{middle.imuCS_pins[2],palm.imuCS_pins[0]}, "middle MCP: ", 0};
+
+jointAngle ringDIP = {{ring.imuCS_pins[0],ring.imuCS_pins[1]}, "ring DIP  : ", 0};
+jointAngle ringPIP = {{ring.imuCS_pins[1],ring.imuCS_pins[2]}, "ring PIP  : ", 0};
+jointAngle ringMCP = {{ring.imuCS_pins[2],palm.imuCS_pins[0]}, "ring MCP  : ", 0};
+
+jointAngle pinkieDIP = {{pinkie.imuCS_pins[0],pinkie.imuCS_pins[1]}, "pinkie DIP: ", 0};
+jointAngle pinkiePIP = {{pinkie.imuCS_pins[1],pinkie.imuCS_pins[2]}, "pinkie PIP: ", 0};
+jointAngle pinkieMCP = {{pinkie.imuCS_pins[2],palm.imuCS_pins[0]}, "pinkie MCP: ", 0};
+
+jointAngle jointArr[][3] = {{thumbDIP, thumbPIP, thumbMCP},
+  {indexDIP, indexPIP, indexMCP},
+  {middleDIP, middlePIP, middleMCP},
+  {ringDIP, ringPIP, ringMCP},
+  {pinkieDIP, pinkiePIP, pinkieMCP}
+  };
 
 
 void setup() {
@@ -145,7 +158,7 @@ void setup() {
 
   xRangeGlobal = xRangeS;
 
-  Serial.begin(120000);
+  Serial.begin(9600);
   SPI.begin();
 
   //chipSelectSetup();
@@ -199,23 +212,6 @@ void setup() {
   }
 }
 
-void chipSelectSetup(){ //see pages 948 and 957 in the manual
-  // 1. Set pads to GPIO mode using IOMUX registers 
-  //find your pin in the schematic, pin 13 was named as B0_03/led pin
-    //IOMUXC_SW_MUX_CTL_PAD_GPIO_B0_03 = 5; 
-    IOMUXC_SW_MUX_CTL_PAD_GPIO_EMC_04 = 5; //GPIO4
-
-  // 2. Setting GPIO as standard mode instead of high speed
-  //e.g. regular and high speed GPIO are shared, IOMUXC_GPR is used to determine if regular or
-  //high speed is selected
-  //IOMUXC_GPR_GPR26-29 determine what mode is selected
-    //IOMUXC_GPR_GPR27 = 0x00000000;
-    IOMUXC_GPR_GPR29 = 0x00;
-
-  // 3. Setting the data direction register (make IO an output)
-    //GPIO2_GDIR |= (1 << chipSelect);
-    GPIO4_GDIR |= (1 << chipSelect);
-}
 
 void prereqSetup(uint8_t dataRSet, uint8_t gyroFiltS, uint8_t accFiltS, uint8_t xRangeS,
 uint8_t gRangeS, uint8_t csPin){ //setup required for both game vector or acc & gyro only mode
@@ -394,23 +390,23 @@ void calculateJointAng(float input[][2], uint8_t imu1, uint8_t imu2, float resul
 
   //subtract the angles and put it into the return values
     //calculating pitch
-    if(pitch1 > pitch2)
+    if(pitch2 > pitch1)
     {
-      result[0] = 360 - pitch1 + pitch2;
+      result[0] = 360 - pitch2 + pitch1;
     }
-    else if(pitch1 < pitch2)
+    else if(pitch2 < pitch1)
     {
-      result[0] = pitch2 - pitch1;
+      result[0] = pitch1 - pitch2;
     }
 
     //calculating roll
-    if(roll1 > roll2)
+    if(roll2 > roll1)
     {
-      result[1] = 360 - roll1 + roll2;
+      result[1] = 360 - roll2 + roll1;
     }
-    else if(roll1 < roll2)
+    else if(roll2 < roll1)
     {
-      result[1] = roll2 - roll1;
+      result[1] = roll1 - roll2;
     }
     
   //Serial.print("Pitch D: ");  Serial.print(result[0]);  Serial.print(" Roll D: ");  Serial.println(result[1]);
@@ -422,53 +418,69 @@ void calculateJointAng(float input[][2], uint8_t imu1, uint8_t imu2, float resul
 void readSingleIMUstrip(int16_t fifoOut[4], float outVals[][2], const uint8_t fingerNum){ //0 for thumb... 4 for pinkie
   for(int i = 0; i < 3; i++)
   {
-    //Serial.print(imuArr[fingerNum].fingerName); Serial.print(imuArr[fingerNum].imuCS_pins[i], DEC); Serial.print("  ");
     getFifoData(fifoOut, imuArr[fingerNum].imuCS_pins[i]);  gravityVecToEuler(fifoOut, imuArr[fingerNum].imuCS_pins[i], outVals);
+    //Serial.print(imuArr[fingerNum].fingerName); Serial.print(imuArr[fingerNum].imuCS_pins[i], DEC); Serial.print("  ");
     //Serial.print(fifoOut[0]); Serial.print("  "); Serial.print(fifoOut[1]); Serial.print("  "); Serial.println(fifoOut[2]);
   }
 }
 
 void readSingleIMU(int16_t fifoOut[4], float outVals[][2], const uint8_t fingerNum, const uint8_t imuNum){
-    Serial.print(imuArr[fingerNum].fingerName); Serial.print(imuArr[fingerNum].imuCS_pins[imuNum], DEC); Serial.print("  ");
     getFifoData(fifoOut, imuArr[fingerNum].imuCS_pins[imuNum]);  gravityVecToEuler(fifoOut, imuArr[fingerNum].imuCS_pins[imuNum], outVals);
-    //Serial.print(fifoOut[0]); Serial.print("  "); Serial.print(fifoOut[1]); Serial.print("  "); Serial.println(fifoOut[2]); //reading the raw gravity vector values
-    Serial.print(" Pitch angle: ");  Serial.print(outVals[imuArr[fingerNum].imuCS_pins[imuNum]][0]); Serial.print(" Roll angle: ");  Serial.println(outVals[imuArr[fingerNum].imuCS_pins[imuNum]][1]); Serial.println("");
+    Serial.print(imuArr[fingerNum].fingerName); Serial.print(imuArr[fingerNum].imuCS_pins[imuNum], DEC); Serial.print("  ");
+    Serial.print(fifoOut[0]); Serial.print("  "); Serial.print(fifoOut[1]); Serial.print("  "); Serial.println(fifoOut[2]); //reading the raw gravity vector values
+    //Serial.print(" Pitch angle: ");  Serial.print(outVals[imuArr[fingerNum].imuCS_pins[imuNum]][0]); Serial.print(" Roll angle: ");  Serial.println(outVals[imuArr[fingerNum].imuCS_pins[imuNum]][1]); Serial.println("");
 
 }
 
 
-void readMultiIMUstrip(int16_t fifoOut[4], float outVals[][2]){
-  readSingleIMUstrip(fifoOut, outVals, 1);
-  readSingleIMUstrip(fifoOut, outVals, 0);
-  //readSingleIMUstrip(fifoOut, outVals, 2);
-  //readSingleIMUstrip(fifoOut, outVals, 3);
-  //readSingleIMUstrip(fifoOut, outVals, 4);
+void readMultiIMUstrips(int16_t fifoOut[4], float outVals[][2]){
+  readSingleIMUstrip(fifoOut, outVals, THUMB);
+  readSingleIMUstrip(fifoOut, outVals, INDEX);
+  readSingleIMUstrip(fifoOut, outVals, MIDDLE);
+  readSingleIMUstrip(fifoOut, outVals, RING);
+  readSingleIMUstrip(fifoOut, outVals, PINKIE);
 }
 
-void readIMUstripJoint(int16_t fifoOut[4], float outVals[][2], float jointAng[], const uint8_t fingerNum){
+void readSingleIMUstripJoint(int16_t fifoOut[4], float outVals[][2], float jointAng[], const uint8_t fingerNum){
   readSingleIMUstrip(fifoOut, outVals, fingerNum);
-  calculateJointAng(outVals, indexDIP.adjacentIMU_cs[0], indexDIP.adjacentIMU_cs[1], jointAng);
-  Serial.print("Joint angle: ");  Serial.print(" "); Serial.println((String)jointAng[0]);
-  //calculateJointAng(outVals, 18, 19, jointAng);
+  Serial.print(fingerNum);
+  for(char i = 0; i < 3; i++)
+  {
+    calculateJointAng(outVals, jointArr[fingerNum][i].adjacentIMU_cs[0], jointArr[fingerNum][i].adjacentIMU_cs[1], jointAng);
+    //Serial.print(jointArr[fingerNum][i].jointName);  Serial.print(" "); Serial.print((String)jointAng[0]);  Serial.print(" ");
+    // finger strip num, jointAng1(tip), jointAng2(mid), jointAng3(base)
+      Serial.print(" "); Serial.print((String)jointAng[0]);
+  }
+  Serial.println(" ");
+}
+
+void readMultiIMUstripJoints(int16_t fifoOut[4], float outVals[][2], float jointAng[]){
+  readSingleIMUstripJoint(fifoOut, outVals, jointAng, THUMB);
+  readSingleIMUstripJoint(fifoOut, outVals, jointAng, INDEX);
+  readSingleIMUstripJoint(fifoOut, outVals, jointAng, MIDDLE);
+  readSingleIMUstripJoint(fifoOut, outVals, jointAng, RING);
+  readSingleIMUstripJoint(fifoOut, outVals, jointAng, PINKIE);
 }
 
 void loop() {
   int16_t fifoOut[4];
   float outVals[40][2], jointAng[2];  //outvals is to store pitch and roll
+
+  //=========================reading joints=============================
+    //readSingleIMUstripJoint(fifoOut, outVals, jointAng, INDEX);
+    readMultiIMUstripJoints(fifoOut, outVals, jointAng);
+  //====================================================================
   
-
-  readIMUstripJoint(fifoOut, outVals, jointAng, 1);
-  //readSingleIMUstrip(fifoOut, outVals, 1); 
-  //readSingleIMU(fifoOut, outVals, 1, 0);
-  //readMultiIMUstrip(fifoOut, outVals);
-
-  //readIMU_manual();
+  //====================reading individual IMUS=========================
+    //readSingleIMUstrip(fifoOut, outVals, MIDDLE); 
+    //readSingleIMU(fifoOut, outVals, PALM, TIP);
+    //readMultiIMUstrips(fifoOut, outVals);
+  //====================================================================
 
   //===Functions for AccGyro only======
-  //
-  //getAccRaw();  getGyrRaw();
-  //delay(1);
-  //
+    //getAccRaw();  getGyrRaw();
+    //delay(1);
+  //===================================
 }
 
 
