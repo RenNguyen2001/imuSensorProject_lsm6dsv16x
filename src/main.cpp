@@ -8,6 +8,11 @@ uint8_t CS_PIN  = 17;
 #define SPI_MISO  11
 #define SPI_SCK 13
 
+#define chipSelect 4 //BO_00 pin name
+#define readSensor 1
+#define writeSensor 0
+SPISettings settingsA(2000000, MSBFIRST, SPI_MODE3);
+
 LSM6DSV16XSensor AccGyr(&SPI, CS_PIN);
 uint8_t status = 0;
 int16_t firstFrame[3];
@@ -161,7 +166,7 @@ void setup() {
   Serial.begin(9600);
   SPI.begin();
 
-  //chipSelectSetup();
+  chipSelectSetup();
 
   Serial.println("Setting up systems....");
   
@@ -193,14 +198,6 @@ void setup() {
     delay(5);
   }
 
-  for(char i = 0; i < 3; i++)
-  {
-    AccGyr.cs_pin = ring.imuCS_pins[i]; //changing the cs_pin from within the header file, made the cs_pin variable public
-    prereqSetup(dRSet, gFiltSetting, xFiltSetting, xRangeS, gRangeS, csPin);
-    
-    gameSetup(gODRSet); //setup game
-    delay(5);
-  }
 
   for(char i = 0; i < 3; i++)
   {
@@ -210,6 +207,26 @@ void setup() {
     gameSetup(gODRSet); //setup game
     delay(5);
   }
+}
+
+void chipSelectSetup(){ //see pages 948 and 957 in the manual
+  // 1. Set pads to GPIO mode using IOMUX registers 
+  //find your pin in the schematic, pin 13 was named as B0_03/led pin
+    //IOMUXC_SW_MUX_CTL_PAD_GPIO_B0_03 = 5; 
+    IOMUXC_SW_MUX_CTL_PAD_GPIO_EMC_04 = 5; //GPIO4
+    IOMUXC_SW_PAD_CTL_PAD_GPIO_EMC_04 = (0b001<<3); //setting drive strength
+
+  // 2. Setting GPIO as standard mode instead of high speed
+  //e.g. regular and high speed GPIO are shared, IOMUXC_GPR is used to determine if regular or
+  //high speed is selected
+  //IOMUXC_GPR_GPR26-29 determine what mode is selected
+    //IOMUXC_GPR_GPR27 = 0x00000000;
+    IOMUXC_GPR_GPR29 = 0x00;
+
+  // 3. Setting the data direction register (make IO an output)
+    //GPIO2_GDIR |= (1 << chipSelect);
+    GPIO4_GDIR |= (1 << chipSelect);
+    GPIO4_DR_SET = (1 << chipSelect);
 }
 
 
@@ -320,6 +337,44 @@ void getFifoData(int16_t quatData[], int chipS_Pin){
   }
   //Serial.print("Quat X: "); Serial.print(quatData[0]); Serial.print(" Quat Y: "); Serial.print(quatData[1]); Serial.print(" Quat Z: "); Serial.println(quatData[2]);
   //Serial.print(quatData[0]); Serial.print("  "); Serial.print(quatData[1]); Serial.print("  "); Serial.println(quatData[2]); 
+}
+
+void spiTransfer(uint8_t address, uint8_t data){
+  SPI.beginTransaction(settingsA);
+  GPIO4_DR_CLEAR = (1 << chipSelect);
+  SPI.transfer(address);  SPI.transfer(data);
+  GPIO4_DR_SET = (1 << chipSelect);
+  SPI.endTransaction();
+}
+
+uint8_t spiRead(uint8_t address){
+  SPI.beginTransaction(settingsA);
+  GPIO4_DR_CLEAR = (1 << chipSelect);
+  SPI.transfer(address);
+  uint8_t spiData = SPI.transfer(0x00);
+  GPIO4_DR_SET = (1 << chipSelect);
+  SPI.endTransaction();
+  return spiData;
+}
+
+void fifoSPIManual(){
+  int16_t quatData[4];
+
+  spiTransfer(0x01, 0x00);  //disable the embed reg access
+
+  uint8_t temp[6], startAddr = 0x79;
+
+  for(uint8_t i = 0; i < 6; i++)
+  {
+    temp[i] = spiRead(0b10000000 + startAddr + i); 
+  }
+    
+  for(uint8_t i = 0; i < 3; i++)
+  {
+    quatData[i] = (uint16_t)(temp[i*2+1]<<8) + (uint16_t)temp[i*2];
+  }
+  Serial.print(quatData[0]); Serial.print("  "); Serial.print(quatData[1]); Serial.print("  "); Serial.println(quatData[2]);
+  delayMicroseconds(100);
 }
 
 void getAccRaw(){
@@ -484,9 +539,10 @@ void loop() {
   
   //====================reading individual IMUS=========================
     //readSingleIMUstrip(fifoOut, outVals, INDEX); 
-    readSingleIMUstripPrint(fifoOut, outVals, INDEX);
+    //readSingleIMUstripPrint(fifoOut, outVals, RING);
     //readSingleIMU(fifoOut, outVals, RING, TIP);
     //readMultiIMUstrips(fifoOut, outVals);
+    fifoSPIManual();
   //====================================================================
 
   //===Functions for AccGyro only======
