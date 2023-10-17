@@ -219,8 +219,8 @@ uint8_t gRangeS, uint8_t csPin){ //setup required for both game vector or acc & 
   AccGyr.begin();
 
   //AccGyr.Write_Reg(0x03, 0b1);  //disable i2c
-  AccGyr.Write_Reg(0x03, 0b1 + (0b1<<7)); //disable I2C and I3C, and enable the pull up on sda
-  AccGyr.Write_Reg(0x02, 0b1<<6); //enabling the pull up resistor on the MISO line
+  //AccGyr.Write_Reg(0x03, 0b1 + (0b1<<7)); //disable I2C and I3C, and enable the pull up on sda
+  //AccGyr.Write_Reg(0x02, 0b1<<6); //enabling the pull up resistor on the MISO line
 
   AccGyr.Write_Reg(0x10, dR[dataRSet] + 0b00010000); //enable acc by setting the odr and setting to high acc ODR mode
   AccGyr.Write_Reg(0x11, dR[dataRSet] + 0b00010000); //enable gyro by setting the odr and setting to high acc ODR mode
@@ -424,11 +424,22 @@ void readSingleIMUstrip(int16_t fifoOut[4], float outVals[][2], const uint8_t fi
   }
 }
 
+void readSingleIMUstripPrint(int16_t fifoOut[4], float outVals[][2], const uint8_t fingerNum){ //0 for thumb... 4 for pinkie
+  for(int i = 0; i < 3; i++)
+  {
+    getFifoData(fifoOut, imuArr[fingerNum].imuCS_pins[i]);  gravityVecToEuler(fifoOut, imuArr[fingerNum].imuCS_pins[i], outVals);
+    Serial.print(imuArr[fingerNum].fingerName); Serial.print(imuArr[fingerNum].imuCS_pins[i], DEC); Serial.print("  ");
+    Serial.print(fifoOut[0]); Serial.print("  "); Serial.print(fifoOut[1]); Serial.print("  "); Serial.println(fifoOut[2]);
+  }
+}
+
 void readSingleIMU(int16_t fifoOut[4], float outVals[][2], const uint8_t fingerNum, const uint8_t imuNum){
-    getFifoData(fifoOut, imuArr[fingerNum].imuCS_pins[imuNum]);  gravityVecToEuler(fifoOut, imuArr[fingerNum].imuCS_pins[imuNum], outVals);
+    uint8_t imuCS_pin =  imuArr[fingerNum].imuCS_pins[imuNum];
+    getFifoData(fifoOut, imuCS_pin);  gravityVecToEuler(fifoOut, imuCS_pin, outVals);
+    
+    Serial.print(" Pitch angle: ");  Serial.print(outVals[imuCS_pin][0]); Serial.print(" Roll angle: ");  Serial.print(outVals[imuCS_pin][1]);  Serial.print(" ");
     Serial.print(imuArr[fingerNum].fingerName); Serial.print(imuArr[fingerNum].imuCS_pins[imuNum], DEC); Serial.print("  ");
     Serial.print(fifoOut[0]); Serial.print("  "); Serial.print(fifoOut[1]); Serial.print("  "); Serial.println(fifoOut[2]); //reading the raw gravity vector values
-    //Serial.print(" Pitch angle: ");  Serial.print(outVals[imuArr[fingerNum].imuCS_pins[imuNum]][0]); Serial.print(" Roll angle: ");  Serial.println(outVals[imuArr[fingerNum].imuCS_pins[imuNum]][1]); Serial.println("");
 
 }
 
@@ -468,12 +479,13 @@ void loop() {
 
   //=========================reading joints=============================
     //readSingleIMUstripJoint(fifoOut, outVals, jointAng, INDEX);
-    readMultiIMUstripJoints(fifoOut, outVals, jointAng);
+    //readMultiIMUstripJoints(fifoOut, outVals, jointAng);
   //====================================================================
   
   //====================reading individual IMUS=========================
-    //readSingleIMUstrip(fifoOut, outVals, MIDDLE); 
-    //readSingleIMU(fifoOut, outVals, PALM, TIP);
+    //readSingleIMUstrip(fifoOut, outVals, INDEX); 
+    readSingleIMUstripPrint(fifoOut, outVals, INDEX);
+    //readSingleIMU(fifoOut, outVals, RING, TIP);
     //readMultiIMUstrips(fifoOut, outVals);
   //====================================================================
 

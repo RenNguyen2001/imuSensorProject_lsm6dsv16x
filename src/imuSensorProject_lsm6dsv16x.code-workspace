@@ -1,0 +1,18 @@
+{
+	"folders": [
+		{
+			"name": "imuSensorProject_lsm6dsv16x",
+			"path": ".."
+		}
+	],
+	"settings": {
+		"files.associations": {
+			"array": "cpp",
+			"string": "cpp",
+			"string_view": "cpp",
+			"cmath": "cpp",
+			"type_traits": "cpp",
+			"limits": "cpp"
+		}
+	}
+}
