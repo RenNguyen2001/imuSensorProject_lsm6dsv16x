@@ -8,7 +8,7 @@ uint8_t CS_PIN  = 17;
 #define SPI_MISO  11
 #define SPI_SCK 13
 
-#define chipSelect 4 //BO_00 pin name
+#define chipSelect 4 //B0_03
 #define readSensor 1
 #define writeSensor 0
 SPISettings settingsA(2000000, MSBFIRST, SPI_MODE3);
@@ -163,10 +163,10 @@ void setup() {
 
   xRangeGlobal = xRangeS;
 
-  Serial.begin(9600);
+  Serial.begin(120000);
   SPI.begin();
 
-  chipSelectSetup();
+  //chipSelectSetup();
 
   Serial.println("Setting up systems....");
   
@@ -198,6 +198,15 @@ void setup() {
     delay(5);
   }
 
+  for(char i = 0; i < 3; i++)
+  {
+    AccGyr.cs_pin = ring.imuCS_pins[i]; //changing the cs_pin from within the header file, made the cs_pin variable public
+    prereqSetup(dRSet, gFiltSetting, xFiltSetting, xRangeS, gRangeS, csPin);
+    
+    gameSetup(gODRSet); //setup game
+    delay(5);
+  }
+
 
   for(char i = 0; i < 3; i++)
   {
@@ -207,26 +216,38 @@ void setup() {
     gameSetup(gODRSet); //setup game
     delay(5);
   }
+
+  AccGyr.cs_pin = palm.imuCS_pins[0]; //changing the cs_pin from within the header file, made the cs_pin variable public
+  prereqSetup(dRSet, gFiltSetting, xFiltSetting, xRangeS, gRangeS, csPin);
+    
+  gameSetup(gODRSet); //setup game
+  delay(5);
 }
 
 void chipSelectSetup(){ //see pages 948 and 957 in the manual
   // 1. Set pads to GPIO mode using IOMUX registers 
   //find your pin in the schematic, pin 13 was named as B0_03/led pin
     //IOMUXC_SW_MUX_CTL_PAD_GPIO_B0_03 = 5; 
-    IOMUXC_SW_MUX_CTL_PAD_GPIO_EMC_04 = 5; //GPIO4
-    IOMUXC_SW_PAD_CTL_PAD_GPIO_EMC_04 = (0b001<<3); //setting drive strength
+    //IOMUXC_SW_MUX_CTL_PAD_GPIO_EMC_04 = 5; //GPIO4
+
+    IOMUXC_SW_MUX_CTL_PAD_GPIO_B0_03 = 0b011; //LPSPI4
+    uint8_t speedSet = (0b00<<6), drvStrength = (0b001<<3), slewRate = 0, hysSet = (0b1<<16);
+    //IOMUXC_SW_PAD_CTL_PAD_GPIO_EMC_04 = drvStrength | speedSet | slewRate | hysSet; //setting drive strength
+    //IOMUXC_SW_PAD_CTL_PAD_GPIO_B0_03 = drvStrength;
 
   // 2. Setting GPIO as standard mode instead of high speed
   //e.g. regular and high speed GPIO are shared, IOMUXC_GPR is used to determine if regular or
   //high speed is selected
   //IOMUXC_GPR_GPR26-29 determine what mode is selected
     //IOMUXC_GPR_GPR27 = 0x00000000;
-    IOMUXC_GPR_GPR29 = 0x00;
+    //IOMUXC_GPR_GPR29 = 0x00;
+
+    IOMUXC_LPSPI4_SCK_SELECT_INPUT = 0;  //selecting alt3 for BO_03
 
   // 3. Setting the data direction register (make IO an output)
     //GPIO2_GDIR |= (1 << chipSelect);
-    GPIO4_GDIR |= (1 << chipSelect);
-    GPIO4_DR_SET = (1 << chipSelect);
+    //GPIO4_GDIR |= (1 << chipSelect);
+    //GPIO4_DR_SET = (1 << chipSelect);
 }
 
 
@@ -477,7 +498,11 @@ void readSingleIMUstrip(int16_t fifoOut[4], float outVals[][2], const uint8_t fi
     //Serial.print(imuArr[fingerNum].fingerName); Serial.print(imuArr[fingerNum].imuCS_pins[i], DEC); Serial.print("  ");
     //Serial.print(fifoOut[0]); Serial.print("  "); Serial.print(fifoOut[1]); Serial.print("  "); Serial.println(fifoOut[2]);
   }
+  getFifoData(fifoOut, imuArr[PALM].imuCS_pins[0]); gravityVecToEuler(fifoOut, imuArr[PALM].imuCS_pins[0], outVals);  
+  outVals[imuArr[PALM].imuCS_pins[0]][0] =  outVals[imuArr[PALM].imuCS_pins[0]][0] - 180; //subtract the palm IMU by 180 since it is facing upwards
+  
 }
+
 
 void readSingleIMUstripPrint(int16_t fifoOut[4], float outVals[][2], const uint8_t fingerNum){ //0 for thumb... 4 for pinkie
   for(int i = 0; i < 3; i++)
@@ -500,11 +525,11 @@ void readSingleIMU(int16_t fifoOut[4], float outVals[][2], const uint8_t fingerN
 
 
 void readMultiIMUstrips(int16_t fifoOut[4], float outVals[][2]){
-  readSingleIMUstrip(fifoOut, outVals, THUMB);
-  readSingleIMUstrip(fifoOut, outVals, INDEX);
-  readSingleIMUstrip(fifoOut, outVals, MIDDLE);
-  readSingleIMUstrip(fifoOut, outVals, RING);
-  readSingleIMUstrip(fifoOut, outVals, PINKIE);
+  readSingleIMUstripPrint(fifoOut, outVals, THUMB);
+  readSingleIMUstripPrint(fifoOut, outVals, INDEX);
+  readSingleIMUstripPrint(fifoOut, outVals, MIDDLE);
+  readSingleIMUstripPrint(fifoOut, outVals, RING);
+  readSingleIMUstripPrint(fifoOut, outVals, PINKIE);
 }
 
 void readSingleIMUstripJoint(int16_t fifoOut[4], float outVals[][2], float jointAng[], const uint8_t fingerNum){
@@ -515,7 +540,7 @@ void readSingleIMUstripJoint(int16_t fifoOut[4], float outVals[][2], float joint
     calculateJointAng(outVals, jointArr[fingerNum][i].adjacentIMU_cs[0], jointArr[fingerNum][i].adjacentIMU_cs[1], jointAng);
     //Serial.print(jointArr[fingerNum][i].jointName);  Serial.print(" "); Serial.print((String)jointAng[0]);  Serial.print(" ");
     // finger strip num, jointAng1(tip), jointAng2(mid), jointAng3(base)
-      Serial.print(" "); Serial.print((String)jointAng[0]);
+    Serial.print(" "); Serial.print((String)jointAng[0]);
   }
   Serial.println(" ");
 }
@@ -533,16 +558,16 @@ void loop() {
   float outVals[40][2], jointAng[2];  //outvals is to store pitch and roll
 
   //=========================reading joints=============================
-    //readSingleIMUstripJoint(fifoOut, outVals, jointAng, INDEX);
+    readSingleIMUstripJoint(fifoOut, outVals, jointAng, INDEX);
     //readMultiIMUstripJoints(fifoOut, outVals, jointAng);
   //====================================================================
   
   //====================reading individual IMUS=========================
     //readSingleIMUstrip(fifoOut, outVals, INDEX); 
-    //readSingleIMUstripPrint(fifoOut, outVals, RING);
-    //readSingleIMU(fifoOut, outVals, RING, TIP);
+    //readSingleIMUstripPrint(fifoOut, outVals, PALM);
+    //readSingleIMU(fifoOut, outVals, PALM, TIP); readSingleIMU(fifoOut, outVals, INDEX, TIP);
     //readMultiIMUstrips(fifoOut, outVals);
-    fifoSPIManual();
+    //fifoSPIManual();
   //====================================================================
 
   //===Functions for AccGyro only======

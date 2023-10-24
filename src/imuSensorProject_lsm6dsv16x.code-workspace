@@ -3,6 +3,15 @@
 		{
 			"name": "imuSensorProject_lsm6dsv16x",
 			"path": ".."
+		},
+		{
+			"path": "../../../../../Desktop/matplot"
+		},
+		{
+			"path": "../../../../Processing/drawJointAngTable"
+		},
+		{
+			"path": "../../../../Processing/drawSingleJoint/drawSingleJoint"
 		}
 	],
 	"settings": {
