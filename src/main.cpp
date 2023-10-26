@@ -558,8 +558,8 @@ void loop() {
   float outVals[40][2], jointAng[2];  //outvals is to store pitch and roll
 
   //=========================reading joints=============================
-    readSingleIMUstripJoint(fifoOut, outVals, jointAng, INDEX);
-    //readMultiIMUstripJoints(fifoOut, outVals, jointAng);
+    //readSingleIMUstripJoint(fifoOut, outVals, jointAng, INDEX);
+    readMultiIMUstripJoints(fifoOut, outVals, jointAng);
   //====================================================================
   
   //====================reading individual IMUS=========================
