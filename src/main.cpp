@@ -420,7 +420,6 @@ void getAccRaw(){
 
 void getGyrRaw(int16_t gyrData[]){
   uint8_t temp[6], startAddr = 0x22;
-  int16_t gyrData[3];
   
   for(uint8_t j = 0; j < 3; j++)
   {
@@ -562,7 +561,7 @@ void loop() {
 
   //=========================reading joints=============================
     //readSingleIMUstripJoint(fifoOut, outVals, jointAng, INDEX);
-    //readMultiIMUstripJoints(fifoOut, outVals, jointAng);
+    readMultiIMUstripJoints(fifoOut, outVals, jointAng);
   //====================================================================
   
   //====================reading individual IMUS=========================
@@ -575,7 +574,7 @@ void loop() {
 
   //===Functions for AccGyro only======
     //getAccRaw();  
-    getGyrRaw(fifoOut);
+    //getGyrRaw(fifoOut);
     //delay(1);
   //===================================
 }
