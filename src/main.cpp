@@ -105,6 +105,8 @@ typedef struct{
   const String fingerName; 
 }imuDetails;
 
+String imuFingerLocation[3] = {"Tip","Mid","Base"};
+
 //CS1 is the tip of the finger, CS2 is the middle, CS3 is the base
 
 enum fingerNumbers{THUMB, INDEX, MIDDLE, RING, PINKIE, PALM};
@@ -341,7 +343,7 @@ void unityDataPrep(int16_t gameArr[]){
 
 void getFifoData(int16_t quatData[], int chipS_Pin){
   AccGyr.cs_pin = chipS_Pin;
-  delayMicroseconds(100);
+  delayMicroseconds(10);
   uint8_t temp[6], startAddr = 0x79;
   float quatFloat[3];
   
@@ -416,7 +418,7 @@ void getAccRaw(){
   Serial.print("Acc X: ");  Serial.print(accData[0]); Serial.print(" Acc Y: ");  Serial.print(accData[1]);  Serial.print(" Acc Z: ");  Serial.print(accData[2]);     
 }
 
-void getGyrRaw(){
+void getGyrRaw(int16_t gyrData[]){
   uint8_t temp[6], startAddr = 0x22;
   int16_t gyrData[3];
   
@@ -508,7 +510,7 @@ void readSingleIMUstripPrint(int16_t fifoOut[4], float outVals[][2], const uint8
   for(int i = 0; i < 3; i++)
   {
     getFifoData(fifoOut, imuArr[fingerNum].imuCS_pins[i]);  gravityVecToEuler(fifoOut, imuArr[fingerNum].imuCS_pins[i], outVals);
-    Serial.print(imuArr[fingerNum].fingerName); Serial.print(imuArr[fingerNum].imuCS_pins[i], DEC); Serial.print("  ");
+    Serial.print(imuArr[fingerNum].fingerName); Serial.print(imuFingerLocation[i]); Serial.print("  ");
     Serial.print(fifoOut[0]); Serial.print("  "); Serial.print(fifoOut[1]); Serial.print("  "); Serial.println(fifoOut[2]);
   }
 }
@@ -540,8 +542,9 @@ void readSingleIMUstripJoint(int16_t fifoOut[4], float outVals[][2], float joint
     calculateJointAng(outVals, jointArr[fingerNum][i].adjacentIMU_cs[0], jointArr[fingerNum][i].adjacentIMU_cs[1], jointAng);
     //Serial.print(jointArr[fingerNum][i].jointName);  Serial.print(" "); Serial.print((String)jointAng[0]);  Serial.print(" ");
     // finger strip num, jointAng1(tip), jointAng2(mid), jointAng3(base)
-    Serial.print(" "); Serial.print((String)jointAng[0]);
+    Serial.print(" "); Serial.print((String)jointAng[0]); 
   }
+  Serial.print(" ");  Serial.print((String)outVals[imuArr[PALM].imuCS_pins[0]][1]);
   Serial.println(" ");
 }
 
@@ -559,19 +562,20 @@ void loop() {
 
   //=========================reading joints=============================
     //readSingleIMUstripJoint(fifoOut, outVals, jointAng, INDEX);
-    readMultiIMUstripJoints(fifoOut, outVals, jointAng);
+    //readMultiIMUstripJoints(fifoOut, outVals, jointAng);
   //====================================================================
   
   //====================reading individual IMUS=========================
     //readSingleIMUstrip(fifoOut, outVals, INDEX); 
-    //readSingleIMUstripPrint(fifoOut, outVals, PALM);
-    //readSingleIMU(fifoOut, outVals, PALM, TIP); readSingleIMU(fifoOut, outVals, INDEX, TIP);
+    //readSingleIMUstripPrint(fifoOut, outVals, INDEX);
+    //readSingleIMU(fifoOut, outVals, PALM, TIP); //readSingleIMU(fifoOut, outVals, INDEX, TIP);
     //readMultiIMUstrips(fifoOut, outVals);
     //fifoSPIManual();
   //====================================================================
 
   //===Functions for AccGyro only======
-    //getAccRaw();  getGyrRaw();
+    //getAccRaw();  
+    getGyrRaw(fifoOut);
     //delay(1);
   //===================================
 }
