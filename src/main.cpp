@@ -8,32 +8,36 @@ uint8_t CS_PIN  = 17;
 #define SPI_MISO  11
 #define SPI_SCK 13
 
-#define chipSelect 4 //B0_03
-#define readSensor 1
-#define writeSensor 0
-SPISettings settingsA(2000000, MSBFIRST, SPI_MODE3);
-
 LSM6DSV16XSensor AccGyr(&SPI, CS_PIN);
 uint8_t status = 0;
 int16_t firstFrame[3];
 uint8_t xRangeGlobal;
 
 unsigned long currentTime = 0, previousTime = 0, elapsedTime = 0;
-float yawAngleGlobal = 0;
+float yawAngleGlobal[] = {0,0,0,0,0};
 
-void prereqSetup(uint8_t dataRSet, uint8_t gyroFiltS, uint8_t accFiltS, uint8_t xRange, uint8_t gRangeS, uint8_t csPin);
+void prereqSetup();
 void regularSetup(int dataRSet);
-void gameSetup(int gameODRSet);
+void gameSetup();
 void getFifoData(int16_t quatData[], int chipS_Pin);
 
-void chipSelectSetup();
-void SPItransmit(char rw, char address, char spiData);
-void IMU_setup();
-void IMU_read();
 
 //const arrays to store values
 
-const uint8_t dR[] = { //acc and gyro data Rates (Hz)
+typedef struct{
+  uint8_t 
+  dataRateSetting,
+  gyroSensSetting,
+  accSensSetting,
+  gameODR_setting,
+  gyroFilterBandwidth,
+  accFilterBandwidth
+  ;
+
+}imuSettings;
+imuSettings imuSettingsGlobal;
+
+const uint8_t dataRateValue[] = { //acc and gyro data Rates (Hz)
   0,  //off
   1,  //1.875
   2,  //7.5
@@ -49,7 +53,7 @@ const uint8_t dR[] = { //acc and gyro data Rates (Hz)
   12, //7.68k
 };
 
-const uint8_t gF_LU240Hz[] = { //gyro filter bandwidth look up table (240Hz)
+const uint8_t gyroFilterBandwidth_240Hz[] = { //gyro filter bandwidth look up table (240Hz)
   0,  //96
   1,  //96
   2,  //96
@@ -60,7 +64,7 @@ const uint8_t gF_LU240Hz[] = { //gyro filter bandwidth look up table (240Hz)
   7,  //14.2
 };
 
-const uint8_t gameODR[] = { //game fusion output data rates (in Hz)
+const uint8_t gameODR_dataRateVal[] = { //game fusion output data rates (in Hz)
   0,  //15
   1,  //30
   2,  //60
@@ -69,7 +73,7 @@ const uint8_t gameODR[] = { //game fusion output data rates (in Hz)
   5   //480
 };
 
-const uint8_t aF_LU_HP[] = {  //acc filter bandwidth look up table for high pass
+const uint8_t accFilterBandwith_HP[] = {  //acc filter bandwidth look up table for high pass
   0,  //SLOPE
   1,  //ODR/10
   2,  //ODR/20
@@ -165,151 +169,64 @@ jointAngle jointArr[][3] = {{thumbDIP, thumbPIP, thumbMCP},
   {middleDIP, middlePIP, middleMCP},
   {ringDIP, ringPIP, ringMCP},
   {pinkieDIP, pinkiePIP, pinkieMCP}
-  };
+};
 
 
 void setup() {
-  uint8_t dRSet = 7;    //gyr and acc output data rate choice (refer to dR[])
-  uint8_t gODRSet = 3;  //game vector output data rate choice (refer to gameODR[])
-  uint8_t gFiltSetting = 4, xFiltSetting = 5; //gyro and acc filter bandwidth selection (refer to gF_LU240Hz[] and aF_LU_HP[])
-  uint8_t xRangeS = 2, gRangeS = 4; //acc and gyro range setting (refer to accRange[] and gyrRange[])
-  uint8_t csPin = 18;
-
-  xRangeGlobal = xRangeS;
+  imuSettingsGlobal.dataRateSetting = 7;  //setting 
+  imuSettingsGlobal.gameODR_setting = 3;  //setting game data rate
+  imuSettingsGlobal.gyroFilterBandwidth = 4;  imuSettingsGlobal.accFilterBandwidth = 5; //setting filter bandwidth
+  imuSettingsGlobal.gyroSensSetting = 2;  imuSettingsGlobal.accSensSetting = 4; //setting sensitivity
 
   Serial.begin(120000);
   SPI.begin();
 
-  //chipSelectSetup();
-
   Serial.println("Setting up systems....");
+
+  for(char j = 0; j < 5; j++)
+  {
+    for(char i = 0; i < 3; i++)
+    {
+      AccGyr.cs_pin = imuArr[j].imuCS_pins[i]; //changing the cs_pin from within the header file, made the cs_pin variable public
+      prereqSetup();
+      
+      gameSetup(); //setup game
+      delay(5);
+    }
+  }
   
-
-  for(char i = 0; i < 3; i++)
-  {
-    AccGyr.cs_pin = thumb.imuCS_pins[i]; //changing the cs_pin from within the header file, made the cs_pin variable public
-    prereqSetup(dRSet, gFiltSetting, xFiltSetting, xRangeS, gRangeS, csPin);
-    
-    gameSetup(gODRSet); //setup game
-    delay(5);
-  }
-
-  for(char i = 0; i < 3; i++)
-  {
-    AccGyr.cs_pin = indexFinger.imuCS_pins[i]; //changing the cs_pin from within the header file, made the cs_pin variable public
-    prereqSetup(dRSet, gFiltSetting, xFiltSetting, xRangeS, gRangeS, csPin);
-    
-    gameSetup(gODRSet); //setup game
-    delay(5);
-  }
-
-  for(char i = 0; i < 3; i++)
-  {
-    AccGyr.cs_pin = middle.imuCS_pins[i]; //changing the cs_pin from within the header file, made the cs_pin variable public
-    prereqSetup(dRSet, gFiltSetting, xFiltSetting, xRangeS, gRangeS, csPin);
-    
-    gameSetup(gODRSet); //setup game
-    delay(5);
-  }
-
-  for(char i = 0; i < 3; i++)
-  {
-    AccGyr.cs_pin = ring.imuCS_pins[i]; //changing the cs_pin from within the header file, made the cs_pin variable public
-    prereqSetup(dRSet, gFiltSetting, xFiltSetting, xRangeS, gRangeS, csPin);
-    
-    gameSetup(gODRSet); //setup game
-    delay(5);
-  }
-
-
-  for(char i = 0; i < 3; i++)
-  {
-    AccGyr.cs_pin = pinkie.imuCS_pins[i]; //changing the cs_pin from within the header file, made the cs_pin variable public
-    prereqSetup(dRSet, gFiltSetting, xFiltSetting, xRangeS, gRangeS, csPin);
-    
-    gameSetup(gODRSet); //setup game
-    delay(5);
-  }
-
   AccGyr.cs_pin = palm.imuCS_pins[0]; //changing the cs_pin from within the header file, made the cs_pin variable public
-  prereqSetup(dRSet, gFiltSetting, xFiltSetting, xRangeS, gRangeS, csPin);
+  prereqSetup();
     
-  gameSetup(gODRSet); //setup game
+  gameSetup(); //setup game
   delay(5);
 }
 
-void chipSelectSetup(){ //see pages 948 and 957 in the manual
-  // 1. Set pads to GPIO mode using IOMUX registers 
-  //find your pin in the schematic, pin 13 was named as B0_03/led pin
-    //IOMUXC_SW_MUX_CTL_PAD_GPIO_B0_03 = 5; 
-    //IOMUXC_SW_MUX_CTL_PAD_GPIO_EMC_04 = 5; //GPIO4
 
-    IOMUXC_SW_MUX_CTL_PAD_GPIO_B0_03 = 0b011; //LPSPI4
-    uint8_t speedSet = (0b00<<6), drvStrength = (0b001<<3), slewRate = 0, hysSet = (0b1<<16);
-    //IOMUXC_SW_PAD_CTL_PAD_GPIO_EMC_04 = drvStrength | speedSet | slewRate | hysSet; //setting drive strength
-    //IOMUXC_SW_PAD_CTL_PAD_GPIO_B0_03 = drvStrength;
-
-  // 2. Setting GPIO as standard mode instead of high speed
-  //e.g. regular and high speed GPIO are shared, IOMUXC_GPR is used to determine if regular or
-  //high speed is selected
-  //IOMUXC_GPR_GPR26-29 determine what mode is selected
-    //IOMUXC_GPR_GPR27 = 0x00000000;
-    //IOMUXC_GPR_GPR29 = 0x00;
-
-    IOMUXC_LPSPI4_SCK_SELECT_INPUT = 0;  //selecting alt3 for BO_03
-
-  // 3. Setting the data direction register (make IO an output)
-    //GPIO2_GDIR |= (1 << chipSelect);
-    //GPIO4_GDIR |= (1 << chipSelect);
-    //GPIO4_DR_SET = (1 << chipSelect);
-}
-
-
-void prereqSetup(uint8_t dataRSet, uint8_t gyroFiltS, uint8_t accFiltS, uint8_t xRangeS,
-uint8_t gRangeS, uint8_t csPin){ //setup required for both game vector or acc & gyro only mode
+void prereqSetup(){ //setup required for both game vector or acc & gyro only mode
   // Initialize LSM6DSV16X.
   AccGyr.begin();
 
-  //AccGyr.Write_Reg(0x03, 0b1);  //disable i2c
-  //AccGyr.Write_Reg(0x03, 0b1 + (0b1<<7)); //disable I2C and I3C, and enable the pull up on sda
-  //AccGyr.Write_Reg(0x02, 0b1<<6); //enabling the pull up resistor on the MISO line
-
-  AccGyr.Write_Reg(0x10, dR[dataRSet] + 0b00010000); //enable acc by setting the odr and setting to high acc ODR mode
-  AccGyr.Write_Reg(0x11, dR[dataRSet] + 0b00010000); //enable gyro by setting the odr and setting to high acc ODR mode
+  AccGyr.Write_Reg(0x10, dataRateValue[imuSettingsGlobal.dataRateSetting] + 0b00010000); //enable acc by setting the odr and setting to high acc ODR mode
+  AccGyr.Write_Reg(0x11, dataRateValue[imuSettingsGlobal.dataRateSetting] + 0b00010000); //enable gyro by setting the odr and setting to high acc ODR mode
 
   // Setting the output data rate configuration register for HAODR
   AccGyr.Write_Reg(0x62, 0b00);  //setting the high acc ODR data rate
 
   // Configure FS of the acc and gyro
   AccGyr.Write_Reg(0x01, 0b00000000 + 0b00000000); //disable the embed reg access
-
+  
   // Setting the filters and scale
   AccGyr.Write_Reg(0x18, (1<<5) + (0<<4)); //turning on fast settling mode and selecting low pass for accelereometer
-  AccGyr.Write_Reg(0x17, accRange[xRangeS] + (accFiltS<<5));  //setting the scale to +-2g and bandwidth
-  AccGyr.Write_Reg(0x15, (gF_LU240Hz[gyroFiltS]<<4) + gyrRange[gRangeS]);  //setting the gyroscope lp filter bandwidth and setting the scale
+  AccGyr.Write_Reg(0x17, accRange[imuSettingsGlobal.accSensSetting] + (imuSettingsGlobal.accFilterBandwidth<<5));  //setting the scale to +-2g and bandwidth
+  AccGyr.Write_Reg(0x15, (gyroFilterBandwidth_240Hz[imuSettingsGlobal.gyroFilterBandwidth]<<4) + gyrRange[imuSettingsGlobal.gyroSensSetting]);  //setting the gyroscope lp filter bandwidth and setting the scale
 }
 
-void regularSetup(int dataRSet){  //to setup only the acc and gyr
-  
-  // Configure FIFO BDR for acc and gyro
-  AccGyr.Write_Reg(0x09, (dR[dataRSet-1]<<4) + dR[dataRSet-1]); //setting the Batch data rate for Gyro and Acc to 240Hz
-
-  // Set FIFO in Continuous mode
-  status |= AccGyr.FIFO_Set_Mode(LSM6DSV16X_STREAM_MODE);
-  
-  if(status != LSM6DSV16X_OK) {
-    Serial.println("LSM6DSV16X Sensor failed to init/configure");
-    while(1);
-  }
-  Serial.println("LSM6DSV16X FIFO Demo");
-}
-
-
-void gameSetup(int gameODRSet){
+void gameSetup(){
   AccGyr.Write_Reg(0x01, 0b00000000 + 0b10000000); //enable the embed reg access
   AccGyr.Write_Reg(0x02, 0b00000001 + 0b00000000); //turning page to embed page
   status |= AccGyr.Write_Reg(0x04, 0b00000010); //set the SFLP_game_EN bit in the EMB_FUNC_EN_A reg
-  status |= AccGyr.Write_Reg(0x5E, 0b01000011 + (gameODR[gameODRSet]<<3)); //sflp odr set
+  status |= AccGyr.Write_Reg(0x5E, 0b01000011 + (gameODR_dataRateVal[imuSettingsGlobal.gameODR_setting]<<3)); //sflp odr set
   status |= AccGyr.Write_Reg(0x66, 0b00000010); //sflp initialisation request
   
   //status |= AccGyr.Write_Reg(0x44, 0b00000010); //enable sflp game rotation vector batching to fifo
@@ -329,33 +246,9 @@ void gameSetup(int gameODRSet){
   Serial.println("LSM6DSV16X FIFO Demo");
 }
 
-void unityDataPrep(int16_t gameArr[]){
-  int8_t byteH, byteL;
-  int16_t directions[] = {254, 400, 555};  //needs to be two bytes to store values up to 65000
-  int x, y, z;
-  directions[0] = gameArr[0]; directions[1] = gameArr[1]; directions[2] = gameArr[2];   
-  //Serial.print("Size of normal int is:"); Serial.println(sizeof(directions[0]));  Serial.print("Size of acc int is:"); Serial.println(sizeof(accArr[0]));
-
-  Serial.write(255);  Serial.write(110);  //sending the dummy byte(s) to mark the first byte
-  //need to seperate each interger into two bytes to send
-  for(int i = 0; i < sizeof(directions)/sizeof(directions[0]); i++)
-  {
-    //for each loop, the data is seperated into two bytes and then sent
-        
-    byteL = directions[i];
-        
-    byteH = (int16_t)directions[i] >> 8;
-        
-    Serial.write(byteL);  Serial.write(byteH);
-   }
-   Serial.write('\n');
-   delayMicroseconds(10);
-  
-}
 
 void getFifoData(int16_t quatData[], int chipS_Pin){
   AccGyr.cs_pin = chipS_Pin;
-  delayMicroseconds(10);
   uint8_t temp[6], startAddr = 0x79;
   float quatFloat[3];
   
@@ -374,47 +267,8 @@ void getFifoData(int16_t quatData[], int chipS_Pin){
   //Serial.print(quatData[0]); Serial.print("  "); Serial.print(quatData[1]); Serial.print("  "); Serial.println(quatData[2]); 
 }
 
-void spiTransfer(uint8_t address, uint8_t data){
-  SPI.beginTransaction(settingsA);
-  GPIO4_DR_CLEAR = (1 << chipSelect);
-  SPI.transfer(address);  SPI.transfer(data);
-  GPIO4_DR_SET = (1 << chipSelect);
-  SPI.endTransaction();
-}
 
-uint8_t spiRead(uint8_t address){
-  SPI.beginTransaction(settingsA);
-  GPIO4_DR_CLEAR = (1 << chipSelect);
-  SPI.transfer(address);
-  uint8_t spiData = SPI.transfer(0x00);
-  GPIO4_DR_SET = (1 << chipSelect);
-  SPI.endTransaction();
-  return spiData;
-}
-
-void fifoSPIManual(){
-  int16_t quatData[4];
-
-  spiTransfer(0x01, 0x00);  //disable the embed reg access
-
-  uint8_t temp[6], startAddr = 0x79;
-
-  for(uint8_t i = 0; i < 6; i++)
-  {
-    temp[i] = spiRead(0b10000000 + startAddr + i); 
-  }
-    
-  for(uint8_t i = 0; i < 3; i++)
-  {
-    quatData[i] = (uint16_t)(temp[i*2+1]<<8) + (uint16_t)temp[i*2];
-  }
-  Serial.print(quatData[0]); Serial.print("  "); Serial.print(quatData[1]); Serial.print("  "); Serial.println(quatData[2]);
-  delayMicroseconds(100);
-}
-
-
-
-void getAccRaw(){
+void getAccData(){
   uint8_t temp[6], startAddr = 0x28;
   int16_t accData[3];
   float accValue[3];
@@ -430,14 +284,14 @@ void getAccRaw(){
     accData[j] = (uint16_t)(temp[j*2+1]<<8) + (uint16_t)temp[j*2];
 
     //converting the raw accelerometer values into +-G scale
-    accValue[j] = accData[j] * accSen[2];
+    accValue[j] = accData[j] * accSen[imuSettingsGlobal.accSensSetting];
   }
   //accData[0] = (uint16_t)(temp[1]<<8) + (uint16_t)temp[0];  Serial.print("Acc Z: ");  Serial.println(accData[0]);
   //Serial.print("Acc X: ");  Serial.print(accData[0]); Serial.print(" Acc Y: ");  Serial.print(accData[1]);  Serial.print(" Acc Z: ");  Serial.println(accData[2]); 
   Serial.print("Acc X: ");  Serial.print(accValue[0]); Serial.print(" Acc Y: ");  Serial.print(accValue[1]);  Serial.print(" Acc Z: ");  Serial.println(accValue[2]);     
 }
 
-void getGyrRaw(int* gyrOutput, int chipS_Pin){
+void getGyrData(int* gyrOutput, int chipS_Pin){
   AccGyr.cs_pin = chipS_Pin;
   uint8_t temp[6], startAddr = 0x22;
   int16_t gyrData[3];
@@ -453,7 +307,7 @@ void getGyrRaw(int* gyrOutput, int chipS_Pin){
     gyrData[j] = (uint16_t)(temp[j*2+1]<<8) + (uint16_t)temp[j*2];
 
     //Converting the raw values into +-dps scale
-    gyrValue[j] = (float)gyrData[j] * gyrSen[4]; 
+    gyrValue[j] = (float)gyrData[j] * gyrSen[imuSettingsGlobal.gyroSensSetting]; 
   }
   *gyrOutput = gyrValue[2];  
   //accData[0] = (uint16_t)(temp[1]<<8) + (uint16_t)temp[0];  Serial.print("Acc Z: ");  Serial.println(accData[0]);
@@ -461,7 +315,7 @@ void getGyrRaw(int* gyrOutput, int chipS_Pin){
   //Serial.print("     Gyr X: ");  Serial.print(gyrValue[0]); Serial.print("   Gyr Y: ");  Serial.print(gyrValue[1]);  Serial.print("   Gyr Z: ");  Serial.println(gyrValue[2]);   
 }
 
-void getYawAng(){
+void getYawAng(const uint8_t fingerNum){
   //start counting time
   currentTime = millis();
   elapsedTime = currentTime - previousTime;
@@ -480,16 +334,13 @@ void getYawAng(){
     previousTime = currentTime;
     elapsedTime = 0;
 
-    getGyrRaw(&gyrData, palm.imuCS_pins[0]);
+    getGyrData(&gyrData, imuArr[fingerNum].imuCS_pins[0]);
     sample = gyrData;  //Serial.print("Gyr Data 2: ");  Serial.println(gyrData); //gyr data is outputting fine
     result = (sample)*(samplePeriod); //Serial.print("Integral: ");  Serial.println(result);
-    yawAngleGlobal = yawAngleGlobal + result;  Serial.print("Yaw Angle: ");  Serial.println(-yawAngleGlobal);
+    yawAngleGlobal[fingerNum] = yawAngleGlobal[fingerNum] + result;  //Serial.print("Yaw Angle: ");  Serial.println(-yawAngleGlobal);
   }
 }
 
-void delayFunc(){
-  
-}
 
 float calculate3DVecAngle(float vecA[], float vecB[]){ //calculates the angle in degrees between two vectors
   double result = atan2(vecA[1],vecA[0]) - atan2(vecB[1],vecB[0]);
@@ -550,11 +401,12 @@ void calculateJointAng(float input[][2], uint8_t imu1, uint8_t imu2, float resul
 void readSingleIMUstrip(int16_t fifoOut[4], float outVals[][2], const uint8_t fingerNum){ //0 for thumb... 4 for pinkie
   for(int i = 0; i < 3; i++)
   {
-    getFifoData(fifoOut, imuArr[fingerNum].imuCS_pins[i]);  gravityVecToEuler(fifoOut, imuArr[fingerNum].imuCS_pins[i], outVals);
+    getFifoData(fifoOut, imuArr[fingerNum].imuCS_pins[i]);                    //get the data from the FIFO registers
+    gravityVecToEuler(fifoOut, imuArr[fingerNum].imuCS_pins[i], outVals);     //get roll and pitch from the gravity vector
     //Serial.print(imuArr[fingerNum].fingerName); Serial.print(imuArr[fingerNum].imuCS_pins[i], DEC); Serial.print("  ");
     //Serial.print(fifoOut[0]); Serial.print("  "); Serial.print(fifoOut[1]); Serial.print("  "); Serial.println(fifoOut[2]);
   }
-  getFifoData(fifoOut, imuArr[PALM].imuCS_pins[0]); gravityVecToEuler(fifoOut, imuArr[PALM].imuCS_pins[0], outVals);  
+  getFifoData(fifoOut, imuArr[PALM].imuCS_pins[0]); gravityVecToEuler(fifoOut, imuArr[PALM].imuCS_pins[0], outVals);  //repeat the above process for the palm IMU  
   outVals[imuArr[PALM].imuCS_pins[0]][0] =  outVals[imuArr[PALM].imuCS_pins[0]][0] - 180; //subtract the palm IMU by 180 since it is facing upwards
   
 }
@@ -586,18 +438,21 @@ void readMultiIMUstrips(int16_t fifoOut[4], float outVals[][2]){
   readSingleIMUstripPrint(fifoOut, outVals, PINKIE);
 }
 
-void readSingleIMUstripJoint(int16_t fifoOut[4], float outVals[][2], float jointAng[], const uint8_t fingerNum){
+void readSingleIMUstripJoint(int16_t fifoOut[4], float outVals[][2], float jointAng[], const uint8_t fingerNum){ 
+  // data output = finger strip num, jointAng1(tip), jointAng2(mid), jointAng3(base), yawAngle, palmRollAng 
+
   readSingleIMUstrip(fifoOut, outVals, fingerNum);
-  Serial.print(fingerNum);
+  getYawAng(fingerNum);
+  Serial.print(fingerNum);  //print out the index of the current finger
   for(char i = 0; i < 3; i++)
   {
-    calculateJointAng(outVals, jointArr[fingerNum][i].adjacentIMU_cs[0], jointArr[fingerNum][i].adjacentIMU_cs[1], jointAng);
+    calculateJointAng(outVals, jointArr[fingerNum][i].adjacentIMU_cs[0], jointArr[fingerNum][i].adjacentIMU_cs[1], jointAng); //calculate the joint angles of a single finger
     //Serial.print(jointArr[fingerNum][i].jointName);  Serial.print(" "); Serial.print((String)jointAng[0]);  Serial.print(" ");
-    // finger strip num, jointAng1(tip), jointAng2(mid), jointAng3(base)
-    Serial.print(" "); Serial.print((String)jointAng[0]); 
+    
+    Serial.print(" "); Serial.print((String)jointAng[0]); //jointAng[0] is pitch, jointAng[1] is pitch
   }
-  Serial.print(" ");  Serial.print((String)outVals[imuArr[PALM].imuCS_pins[0]][1]);
-  Serial.println(" ");
+  Serial.print(" ");  Serial.print(-yawAngleGlobal[fingerNum]);
+  Serial.print(" ");  Serial.println((String)outVals[imuArr[PALM].imuCS_pins[0]][1]); //palmRollAng
 }
 
 void readMultiIMUstripJoints(int16_t fifoOut[4], float outVals[][2], float jointAng[]){
@@ -615,8 +470,8 @@ void loop() {
   int gyrOutput;
 
   //=========================reading joints=============================
-    //readSingleIMUstripJoint(fifoOut, outVals, jointAng, INDEX);
-    //readMultiIMUstripJoints(fifoOut, outVals, jointAng);
+    //readSingleIMUstripJoint(fifoOut, outVals, jointAng, PINKIE);
+    readMultiIMUstripJoints(fifoOut, outVals, jointAng);  //data is output in this order: fingerNum jointAng1 jointAng2 jointAng3 
   //====================================================================
   
   //====================reading individual IMUS=========================
@@ -628,25 +483,6 @@ void loop() {
   //====================================================================
 
   //===Functions for AccGyro only======
-    //getAccRaw();  
-    //getGyrRaw(&gyrOutput, palm.imuCS_pins[0]);
-    getYawAng();
-    //delay(1);
+    //getYawAng();
   //===================================
-}
-
-
-
-void checkGameRegs(){
-  uint8_t tag, temp;
-  uint16_t temp16;
-  int32_t temp32;
-  AccGyr.Write_Reg(0x01, 0b00000000 + 0b10000000); //enable the embed reg access
-  AccGyr.Write_Reg(0x02, 0b00000001 + 0b00000000); //turning page to embed page
-  Serial.println("Checking registers:");
-  AccGyr.Read_Reg(0x04,&temp);  Serial.print("Game enable register:"); Serial.println(temp, BIN);
-  AccGyr.Read_Reg(0x66,&temp);  Serial.print("Game initialise:"); Serial.println(temp, BIN);
-  AccGyr.Read_Reg(0x44,&temp);  Serial.print("Game fifo batch:"); Serial.println(temp, BIN);
-  AccGyr.Read_Reg(0x5E,&temp);  Serial.print("Game ODR:"); Serial.println(temp, BIN);
-  AccGyr.Read_Reg(0x07,&temp);  Serial.print("Game running?(1 if true):"); Serial.println(temp, BIN);
 }
