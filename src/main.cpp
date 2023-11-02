@@ -18,6 +18,9 @@ uint8_t status = 0;
 int16_t firstFrame[3];
 uint8_t xRangeGlobal;
 
+unsigned long currentTime = 0, previousTime = 0, elapsedTime = 0;
+float yawAngleGlobal = 0;
+
 void prereqSetup(uint8_t dataRSet, uint8_t gyroFiltS, uint8_t accFiltS, uint8_t xRange, uint8_t gRangeS, uint8_t csPin);
 void regularSetup(int dataRSet);
 void gameSetup(int gameODRSet);
@@ -84,11 +87,11 @@ const uint8_t accRange[] = {  //the comments below represent the range and decim
   3   //+16g, 2048
 };
 
-  const uint16_t accSen[] = {  //accelerometer sensitivity
-    16384,  //+2g, 16384
-    8192,   //+4g, 8192
-    4096,   //+8g, 4096
-    2048    //+16g, 2048
+  const float accSen[] = {  //accelerometer sensitivity (g/LSB)
+    0.061/1000,  //+-2g
+    0.122/1000,  //+-4g
+    0.244/1000,  //+-8g
+    0.488/1000   //+-16g
   };
 
 const uint8_t gyrRange[] = {  //the comments below represent the range (in dps)
@@ -99,6 +102,15 @@ const uint8_t gyrRange[] = {  //the comments below represent the range (in dps)
   0b0100, //2000
   0b1100  //4000
 };
+
+  const float gyrSen[] = {  //gyro sensitivity (dps/LSB)
+      4.375/1000,  //+-125 dps
+      8.75/1000,   //+-250 dps
+      17.5/1000,   //+-500 dps
+      35.0/1000,     //+-1000 dps
+      70.0/1000,     //+-2000 dps
+      140.0/1000     //+-4000 dps
+  };
 
 typedef struct{
   const uint8_t imuCS_pins[3];
@@ -400,38 +412,83 @@ void fifoSPIManual(){
   delayMicroseconds(100);
 }
 
+
+
 void getAccRaw(){
   uint8_t temp[6], startAddr = 0x28;
   int16_t accData[3];
-  
+  float accValue[3];
+
   for(uint8_t j = 0; j < 3; j++)
   {
+    //getting the raw accelerometer values
     for(uint8_t i = 0; i < 6; i ++)
     {
       AccGyr.Read_Reg(startAddr + i, &temp[i]);
     }
 
     accData[j] = (uint16_t)(temp[j*2+1]<<8) + (uint16_t)temp[j*2];
-    
+
+    //converting the raw accelerometer values into +-G scale
+    accValue[j] = accData[j] * accSen[2];
   }
   //accData[0] = (uint16_t)(temp[1]<<8) + (uint16_t)temp[0];  Serial.print("Acc Z: ");  Serial.println(accData[0]);
-  Serial.print("Acc X: ");  Serial.print(accData[0]); Serial.print(" Acc Y: ");  Serial.print(accData[1]);  Serial.print(" Acc Z: ");  Serial.print(accData[2]);     
+  //Serial.print("Acc X: ");  Serial.print(accData[0]); Serial.print(" Acc Y: ");  Serial.print(accData[1]);  Serial.print(" Acc Z: ");  Serial.println(accData[2]); 
+  Serial.print("Acc X: ");  Serial.print(accValue[0]); Serial.print(" Acc Y: ");  Serial.print(accValue[1]);  Serial.print(" Acc Z: ");  Serial.println(accValue[2]);     
 }
 
-void getGyrRaw(int16_t gyrData[]){
+void getGyrRaw(int* gyrOutput, int chipS_Pin){
+  AccGyr.cs_pin = chipS_Pin;
   uint8_t temp[6], startAddr = 0x22;
+  int16_t gyrData[3];
+  float gyrValue[3];
   
   for(uint8_t j = 0; j < 3; j++)
   {
+    //Getting the raw gyro values from output registers
     for(uint8_t i = 0; i < 6; i ++)
     {
       AccGyr.Read_Reg(startAddr + i, &temp[i]);
     }
     gyrData[j] = (uint16_t)(temp[j*2+1]<<8) + (uint16_t)temp[j*2];
-    
+
+    //Converting the raw values into +-dps scale
+    gyrValue[j] = (float)gyrData[j] * gyrSen[4]; 
   }
+  *gyrOutput = gyrValue[2];  
   //accData[0] = (uint16_t)(temp[1]<<8) + (uint16_t)temp[0];  Serial.print("Acc Z: ");  Serial.println(accData[0]);
-  Serial.print("     Gyr X: ");  Serial.print(gyrData[0]); Serial.print("   Gyr Y: ");  Serial.print(gyrData[1]);  Serial.print("   Gyr Z: ");  Serial.println(gyrData[2]);     
+  //Serial.print("     Gyr X: ");  Serial.print(gyrData[0]); Serial.print("   Gyr Y: ");  Serial.print(gyrData[1]);  Serial.print("   Gyr Z: ");  Serial.println(gyrData[2]);  
+  //Serial.print("     Gyr X: ");  Serial.print(gyrValue[0]); Serial.print("   Gyr Y: ");  Serial.print(gyrValue[1]);  Serial.print("   Gyr Z: ");  Serial.println(gyrValue[2]);   
+}
+
+void getYawAng(){
+  //start counting time
+  currentTime = millis();
+  elapsedTime = currentTime - previousTime;
+
+  //sample variables
+  float sample,
+  sampleFrequency = 10,
+  samplePeriod, result;
+  samplePeriod = (1/sampleFrequency);  //in seconds
+
+  int gyrData;
+
+  //take one sample at the end of each samplingPeriod
+  if(elapsedTime >= (int)(samplePeriod*1000))
+  {
+    previousTime = currentTime;
+    elapsedTime = 0;
+
+    getGyrRaw(&gyrData, palm.imuCS_pins[0]);
+    sample = gyrData;  //Serial.print("Gyr Data 2: ");  Serial.println(gyrData); //gyr data is outputting fine
+    result = (sample)*(samplePeriod); //Serial.print("Integral: ");  Serial.println(result);
+    yawAngleGlobal = yawAngleGlobal + result;  Serial.print("Yaw Angle: ");  Serial.println(-yawAngleGlobal);
+  }
+}
+
+void delayFunc(){
+  
 }
 
 float calculate3DVecAngle(float vecA[], float vecB[]){ //calculates the angle in degrees between two vectors
@@ -490,8 +547,6 @@ void calculateJointAng(float input[][2], uint8_t imu1, uint8_t imu2, float resul
   //Serial.print(imu1);  Serial.print(" ");  Serial.print(imu2);  Serial.print(" "); Serial.print(result[0]);  Serial.print(" ");  Serial.println(result[1]);
 }
 
-
-
 void readSingleIMUstrip(int16_t fifoOut[4], float outVals[][2], const uint8_t fingerNum){ //0 for thumb... 4 for pinkie
   for(int i = 0; i < 3; i++)
   {
@@ -503,7 +558,6 @@ void readSingleIMUstrip(int16_t fifoOut[4], float outVals[][2], const uint8_t fi
   outVals[imuArr[PALM].imuCS_pins[0]][0] =  outVals[imuArr[PALM].imuCS_pins[0]][0] - 180; //subtract the palm IMU by 180 since it is facing upwards
   
 }
-
 
 void readSingleIMUstripPrint(int16_t fifoOut[4], float outVals[][2], const uint8_t fingerNum){ //0 for thumb... 4 for pinkie
   for(int i = 0; i < 3; i++)
@@ -523,7 +577,6 @@ void readSingleIMU(int16_t fifoOut[4], float outVals[][2], const uint8_t fingerN
     Serial.print(fifoOut[0]); Serial.print("  "); Serial.print(fifoOut[1]); Serial.print("  "); Serial.println(fifoOut[2]); //reading the raw gravity vector values
 
 }
-
 
 void readMultiIMUstrips(int16_t fifoOut[4], float outVals[][2]){
   readSingleIMUstripPrint(fifoOut, outVals, THUMB);
@@ -555,13 +608,15 @@ void readMultiIMUstripJoints(int16_t fifoOut[4], float outVals[][2], float joint
   readSingleIMUstripJoint(fifoOut, outVals, jointAng, PINKIE);
 }
 
+
 void loop() {
   int16_t fifoOut[4];
   float outVals[40][2], jointAng[2];  //outvals is to store pitch and roll
+  int gyrOutput;
 
   //=========================reading joints=============================
     //readSingleIMUstripJoint(fifoOut, outVals, jointAng, INDEX);
-    readMultiIMUstripJoints(fifoOut, outVals, jointAng);
+    //readMultiIMUstripJoints(fifoOut, outVals, jointAng);
   //====================================================================
   
   //====================reading individual IMUS=========================
@@ -574,7 +629,8 @@ void loop() {
 
   //===Functions for AccGyro only======
     //getAccRaw();  
-    //getGyrRaw(fifoOut);
+    //getGyrRaw(&gyrOutput, palm.imuCS_pins[0]);
+    getYawAng();
     //delay(1);
   //===================================
 }
