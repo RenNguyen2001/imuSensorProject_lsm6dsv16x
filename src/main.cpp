@@ -1,20 +1,24 @@
 #include <LSM6DSV16XSensor.h>
 #include <math.h>
 #include <SPI.h>
+#include <elapsedMillis.h>
 
-uint8_t CS_PIN  = 17;
-//17,18 for the breadboard, 18 for the PCB
+elapsedMillis sinceTestTime;
+elapsedMillis sinceTestTime2;
+
+uint8_t CS_PIN  = 18;
 #define SPI_MOSI  12
 #define SPI_MISO  11
 #define SPI_SCK 13
 
 LSM6DSV16XSensor AccGyr(&SPI, CS_PIN);
 uint8_t status = 0;
-int16_t firstFrame[3];
-uint8_t xRangeGlobal;
 
-unsigned long currentTime = 0, previousTime = 0, elapsedTime = 0;
-float yawAngleGlobal[] = {0,0,0,0,0};
+
+unsigned long currentTime = 0, previousTime[] = {0,0,0,0,0}, elapsedTime[] = {0,0,0,0,0}, printElapsedTime = 0, printPreviousTime = 0;
+float yawAngleGlobal[] = {360-45,0,0,0,0}; //Starting yaw values, will changed based on calibration procedure/starting hand position
+float piGlobal = 22.0/7.0;
+float yawGlobalCompare = 0;
 
 void prereqSetup();
 void regularSetup(int dataRSet);
@@ -22,7 +26,7 @@ void gameSetup();
 void getFifoData(int16_t quatData[], int chipS_Pin);
 
 
-//const arrays to store values
+//Settings and const arrays to store values
 
 typedef struct{
   uint8_t 
@@ -31,7 +35,13 @@ typedef struct{
   accSensSetting,
   gameODR_setting,
   gyroFilterBandwidth,
-  accFilterBandwidth
+  accFilterBandwidth;
+
+  float
+  //yaw function settings
+  yawSampleFrequency = 150.0,                   //frequency in Hz
+  yawSamplePeriod = (1/yawSampleFrequency),   //period in seconds
+  yawSampleCounter = yawSamplePeriod * 1e6;  //counter for the if statement
   ;
 
 }imuSettings;
@@ -144,6 +154,8 @@ typedef struct jointAngle{
   uint16_t angle;
 }jointAngle;
 
+enum jointNumbers{DIP, PIP, MCP};
+
 jointAngle thumbDIP = {{thumb.imuCS_pins[0],thumb.imuCS_pins[1]}, "thumb DIP : ", 0};
 jointAngle thumbPIP = {{thumb.imuCS_pins[1],thumb.imuCS_pins[2]}, "thumb PIP : ", 0};
 jointAngle thumbMCP = {{thumb.imuCS_pins[2],palm.imuCS_pins[0]}, "thumb MCP : ", 0};
@@ -164,13 +176,14 @@ jointAngle pinkieDIP = {{pinkie.imuCS_pins[0],pinkie.imuCS_pins[1]}, "pinkie DIP
 jointAngle pinkiePIP = {{pinkie.imuCS_pins[1],pinkie.imuCS_pins[2]}, "pinkie PIP: ", 0};
 jointAngle pinkieMCP = {{pinkie.imuCS_pins[2],palm.imuCS_pins[0]}, "pinkie MCP: ", 0};
 
-jointAngle jointArr[][3] = {{thumbDIP, thumbPIP, thumbMCP},
+jointAngle jointArr[][3] = {{thumbDIP, thumbPIP, thumbMCP}, 
   {indexDIP, indexPIP, indexMCP},
   {middleDIP, middlePIP, middleMCP},
   {ringDIP, ringPIP, ringMCP},
   {pinkieDIP, pinkiePIP, pinkieMCP}
 };
 
+enum rotationAxisOptions{YAW, PITCH, ROLL};
 
 void setup() {
   imuSettingsGlobal.dataRateSetting = 7;  //setting 
@@ -181,13 +194,13 @@ void setup() {
   Serial.begin(120000);
   SPI.begin();
 
-  Serial.println("Setting up systems....");
+  Serial.println("Setting up IMUs....");
 
   for(char j = 0; j < 5; j++)
   {
     for(char i = 0; i < 3; i++)
     {
-      AccGyr.cs_pin = imuArr[j].imuCS_pins[i]; //changing the cs_pin from within the header file, made the cs_pin variable public
+      AccGyr.cs_pin = imuArr[j].imuCS_pins[i]; //changing the cs_pin from within the header file, made the cs_pin variable public (you may have to manually change it to public in LSM6DSV16XSensor.h)
       prereqSetup();
       
       gameSetup(); //setup game
@@ -203,7 +216,11 @@ void setup() {
 }
 
 
-void prereqSetup(){ //setup required for both game vector or acc & gyro only mode
+/**
+ * @brief Setup for both game or acc & gyro only mode
+ * 
+ */
+void prereqSetup(){ 
   // Initialize LSM6DSV16X.
   AccGyr.begin();
 
@@ -229,8 +246,8 @@ void gameSetup(){
   status |= AccGyr.Write_Reg(0x5E, 0b01000011 + (gameODR_dataRateVal[imuSettingsGlobal.gameODR_setting]<<3)); //sflp odr set
   status |= AccGyr.Write_Reg(0x66, 0b00000010); //sflp initialisation request
   
-  //status |= AccGyr.Write_Reg(0x44, 0b00000010); //enable sflp game rotation vector batching to fifo
-  status |= AccGyr.Write_Reg(0x44, 0b00010000); //enable sflp gravity vector batching to fifo
+  status |= AccGyr.Write_Reg(0x44, 0b00000010); //enable sflp game rotation vector batching to fifo
+  //status |= AccGyr.Write_Reg(0x44, 0b00010000); //enable sflp gravity vector batching to fifo
   //status |= AccGyr.Write_Reg(0x44, 0b00100000); //enable sflp gyroscope bias vector batching to fifo
 
   // Configure ODR and FS of the acc and gyro
@@ -291,7 +308,7 @@ void getAccData(){
   Serial.print("Acc X: ");  Serial.print(accValue[0]); Serial.print(" Acc Y: ");  Serial.print(accValue[1]);  Serial.print(" Acc Z: ");  Serial.println(accValue[2]);     
 }
 
-void getGyrData(int* gyrOutput, int chipS_Pin){
+void getGyrData(float* gyrOutput, int chipS_Pin){
   AccGyr.cs_pin = chipS_Pin;
   uint8_t temp[6], startAddr = 0x22;
   int16_t gyrData[3];
@@ -317,27 +334,41 @@ void getGyrData(int* gyrOutput, int chipS_Pin){
 
 void getYawAng(const uint8_t fingerNum){
   //start counting time
-  currentTime = millis();
-  elapsedTime = currentTime - previousTime;
+  currentTime = micros();
+  elapsedTime[fingerNum] = currentTime - previousTime[fingerNum];
 
   //sample variables
-  float sample,
-  sampleFrequency = 10,
-  samplePeriod, result;
-  samplePeriod = (1/sampleFrequency);  //in seconds
+  float sum = 0, result, gyrData;
 
-  int gyrData;
+  int numOfFingers = 2;
 
-  //take one sample at the end of each samplingPeriod
-  if(elapsedTime >= (int)(samplePeriod*1000))
+  //take one sample at the end of each sampling Period
+  if(elapsedTime[fingerNum] >= imuSettingsGlobal.yawSampleCounter)  //refer to imuSettings for yaw settings (to change sample period and sample frequency)
   {
-    previousTime = currentTime;
-    elapsedTime = 0;
+    previousTime[fingerNum] = micros();
+    elapsedTime[fingerNum] = 0;
 
-    getGyrData(&gyrData, imuArr[fingerNum].imuCS_pins[0]);
-    sample = gyrData;  //Serial.print("Gyr Data 2: ");  Serial.println(gyrData); //gyr data is outputting fine
-    result = (sample)*(samplePeriod); //Serial.print("Integral: ");  Serial.println(result);
-    yawAngleGlobal[fingerNum] = yawAngleGlobal[fingerNum] + result;  //Serial.print("Yaw Angle: ");  Serial.println(-yawAngleGlobal);
+    for(uint8_t i = 0; i < numOfFingers; i ++)  //calculating the yaw at each IMU on a finger
+    {
+      getGyrData(&gyrData, imuArr[fingerNum].imuCS_pins[i]);
+      if(abs(gyrData) > 10)
+      {
+        sum = sum + gyrData;
+      }
+      
+    }
+
+    result = ((sum)*(imuSettingsGlobal.yawSamplePeriod))/numOfFingers; //calculating the average yaw of the finger
+    yawAngleGlobal[fingerNum] = yawAngleGlobal[fingerNum] + result;
+    if(yawAngleGlobal[fingerNum] <= 0)
+    {
+      yawAngleGlobal[fingerNum] = 360 - yawAngleGlobal[fingerNum];
+    }
+    else if(yawAngleGlobal[fingerNum] > 360)
+    {
+      yawAngleGlobal[fingerNum] = yawAngleGlobal[fingerNum] - 360;
+    }
+    //Serial.print("Yaw: ");  Serial.println(yawAngleGlobal[fingerNum]);  
   }
 }
 
@@ -349,7 +380,14 @@ float calculate3DVecAngle(float vecA[], float vecB[]){ //calculates the angle in
   return degrees;
 }
 
-void gravityVecToEuler(int16_t quatData[], uint8_t indexNo, float output[][2]){ //uses the gravity vector to calculate euler angles
+/**
+ * @brief Uses the gravity vector calculate pitch and roll
+ * 
+ * @param quatData - FIFO input data
+ * @param indexNo - The index of the current IMU
+ * @param output - Stores the pitch and roll values
+ */
+void gravityVecToEuler(int16_t quatData[], uint8_t indexNo, float output[][2]){ 
   float gravValue = 16384;
   float pitchTheta, rollTheta;
   float zAxisVec[3] = {0,gravValue};
@@ -368,7 +406,15 @@ void gravityVecToEuler(int16_t quatData[], uint8_t indexNo, float output[][2]){ 
   output[indexNo][0] = pitchTheta;  output[indexNo][1] = rollTheta;
 }
 
-void calculateJointAng(float input[][2], uint8_t imu1, uint8_t imu2, float result[]){ //calculates the angle between two adjacent IMUs
+/**
+ * @brief Calculates the angle between two adjacent IMUs
+ * 
+ * @param input 
+ * @param imu1 First IMU pitch and roll data
+ * @param imu2 Second IMU pitch and roll data
+ * @param result Joint angle in degrees
+ */
+void calculateJointAng(float input[][2], uint8_t imu1, uint8_t imu2, float result[]){
   //get the pitch and yaw for the two IMUs
   float pitch1 = input[imu1][0], roll1 = input[imu1][1],
   pitch2 = input[imu2][0], roll2 = input[imu2][1];
@@ -438,6 +484,14 @@ void readMultiIMUstrips(int16_t fifoOut[4], float outVals[][2]){
   readSingleIMUstripPrint(fifoOut, outVals, PINKIE);
 }
 
+/**
+ * @brief Calculates the joint angles (using the gravity vector) for a single flex PCB strip and outputs it to serial
+ * 
+ * @param fifoOut Fifo Input data
+ * @param outVals Array that stores pitch and roll values
+ * @param jointAng Joint angle in degrees
+ * @param fingerNum Chooses which finger is read
+ */
 void readSingleIMUstripJoint(int16_t fifoOut[4], float outVals[][2], float jointAng[], const uint8_t fingerNum){ 
   // data output = finger strip num, jointAng1(tip), jointAng2(mid), jointAng3(base), yawAngle, palmRollAng 
 
@@ -455,6 +509,13 @@ void readSingleIMUstripJoint(int16_t fifoOut[4], float outVals[][2], float joint
   Serial.print(" ");  Serial.println((String)outVals[imuArr[PALM].imuCS_pins[0]][1]); //palmRollAng
 }
 
+/**
+ * @brief Reads the joint angles for multiple flex PCBs using gravity vector calculations
+ * 
+ * @param fifoOut - Input data from the fifoRead function
+ * @param outVals - stores the pitch and roll values
+ * @param jointAng - Joint angle in degrees
+ */
 void readMultiIMUstripJoints(int16_t fifoOut[4], float outVals[][2], float jointAng[]){
   readSingleIMUstripJoint(fifoOut, outVals, jointAng, THUMB);
   readSingleIMUstripJoint(fifoOut, outVals, jointAng, INDEX);
@@ -463,26 +524,390 @@ void readMultiIMUstripJoints(int16_t fifoOut[4], float outVals[][2], float joint
   readSingleIMUstripJoint(fifoOut, outVals, jointAng, PINKIE);
 }
 
+/**
+ * @brief Get the quaternion data for a single IMU
+ * 
+ * @param quatData - quaternion output data
+ * @param chipSelectPin - chooses which IMU is read
+ */
+void getSingleQuatData(float quatData[], uint8_t chipSelectPin){
+  AccGyr.cs_pin = chipSelectPin;
+  AccGyr.FIFO_Get_Rotation_Vector(quatData);
+}
+
+
+/**
+ * @brief Convert quaternions into euler angles; pitch, roll and yaw
+ * 
+ * @param quaternion - quaternion input data
+ * @param output - output value, roll changes when fingers bend
+ */
+void quat2Euler(float quaternion[], float* rollOut, float* yawOut){ 
+  float qw, qx, qy, qz;
+  float yaw, pitch, roll;
+
+  qw = quaternion[3]; qx = quaternion[0]; qy = quaternion[1]; qz = quaternion[2]; //making it easier to read
+
+  yaw = atan2( 2.0000*(qx*qy+qw*qz), sq(qw) + sq(qx) - sq(qy) - sq(qz))*(180.0000/piGlobal);
+  roll = atan2( 2*(qy*qz+qw*qx), sq(qw) - sq(qx) - sq(qy) + sq(qz))*(180.0/piGlobal);
+  pitch = asin(-2*(qx*qz-qw*qy))*(180.0/piGlobal);
+
+  //convert roll from (-180 to 180) range to (0 to 360) range
+  roll = 180 - roll;
+
+  *rollOut = roll;
+  *yawOut = 180 - yaw;  //to correct the yaw since the finger strips IMUs are upside down
+
+  //Serial.print("Roll: "); Serial.print(roll); Serial.print(" Yaw: "); Serial.print(yaw);  Serial.print(" Pitch: "); Serial.println(pitch);
+}
+
+/**
+ * @brief Read a single IMU, calculated using quaternions
+ * 
+ */
+void readSingleIMUQuat(uint8_t fingerNum, uint8_t imuIndex){
+  float quatData[4], eulerAng, yaw, qw, qx, qy, qz;
+  getSingleQuatData(quatData, imuArr[fingerNum].imuCS_pins[imuIndex]); 
+  qw = quatData[3]; qx = quatData[0]; qy = quatData[1]; qz = quatData[2]; //making it easier to read
+  Serial.print("Quat:");  
+  Serial.print(qw, 4); Serial.print(" ");  
+  Serial.print(qx, 4); Serial.print(" ");
+  Serial.print(qy, 4); Serial.print(" ");
+  Serial.print(qz, 4); Serial.print(" ");
+
+  quat2Euler(quatData, &eulerAng, &yaw);
+  Serial.print("Yaw: ");  Serial.println(yaw);  
+}
+
+/**
+ * @brief Print out the angle of a single joint, for use with the excel data streamer
+ * 
+ * @param fingerNum 
+ * @param jointNum 
+ * @param referenceAng Just to excel that is the angle value we want to record (it selects to corresponding column)
+ */
+void printSingleJoint(uint8_t fingerNum, uint8_t jointNum, uint8_t referenceAng, uint8_t *numOfPrints){
+  float quatData[4], quatData2[4], eulerAng[2], result[3], yaw[3], yaw2, sum = 0;
+  int printPeriod = 500;  //print delay in microseconds
+
+  for(uint8_t i = 0; i < 3; i++)
+  {
+    getSingleQuatData(quatData, jointArr[fingerNum][i].adjacentIMU_cs[0]); quat2Euler(quatData, &eulerAng[0], &yaw[i]);
+    getSingleQuatData(quatData2, jointArr[fingerNum][i].adjacentIMU_cs[1]);  quat2Euler(quatData2, &eulerAng[1], &yaw2);
+
+    if(i == 2)
+    {
+      eulerAng[1] = eulerAng[1] + 180;  //The IMU on the mainboard and the IMU on the strips are facing opposite directions
+      
+    }
+
+    //Change the angle range from -180->+180 to 0->360
+    if(eulerAng[1] > eulerAng[0])
+    {
+      result[i] = (360 - eulerAng[1]) + eulerAng[0];
+    }
+    else
+    {
+      result[i] = eulerAng[0] - eulerAng[1];
+    }
+
+  }
+
+  getYawAng(fingerNum);
+
+  getSingleQuatData(quatData, imuArr[PALM].imuCS_pins[TIP]); quat2Euler(quatData, &eulerAng[0], &yaw2);
+ 
+  eulerAng[0] = eulerAng[0] - 180;
+  if(eulerAng[0] < 0)
+  {
+    eulerAng[0] = 360 + eulerAng[0];
+  }
+
+  currentTime = millis();
+  printElapsedTime = currentTime - printPreviousTime;
+
+  if(printElapsedTime > printPeriod)  //incase the data streamer smapling delay doesn't work
+  {
+    printElapsedTime = 0;
+    printPreviousTime = millis();
+    *numOfPrints = *numOfPrints + 1;
+    Serial.print(fingerNum); Serial.print(",");  Serial.print(jointNum); Serial.print(","); Serial.print(referenceAng, DEC); 
+    Serial.print(","); Serial.println(result[jointNum]);
+    
+  }
+
+  
+}
+
+void calculateThumbStripJnts(){
+  uint8_t fingerNum = 0;
+  // data output = finger strip num, jointAng1(tip), jointAng2(mid), jointAng3(base), yawAngle, palmRollAng 
+
+  float quatData[4], quatData2[4], eulerAng[2], result[3], yaw[3], yaw2, sum = 0;
+
+  //get the angle between the IP IMU and the mainboard IMU
+  getSingleQuatData(quatData, imuArr[THUMB].imuCS_pins[MID]); quat2Euler(quatData, &eulerAng[0], &yaw[0]); //The IP IMU
+  getSingleQuatData(quatData, imuArr[PALM].imuCS_pins[TIP]); quat2Euler(quatData, &eulerAng[1], &yaw[0]); //mainboard IMU
+
+  eulerAng[1] = eulerAng[1] + 180;  //The IMU on the mainboard and the IMU on the strips are facing opposite directions
+
+  //Change the angle range from -180->+180 to 0->360
+  if(eulerAng[1] > eulerAng[0])
+  {
+    result[0] = (360 - eulerAng[1]) + eulerAng[0];
+  }
+  else
+  {
+    result[0] = eulerAng[0] - eulerAng[1];
+  }
+  //result[0] is the angle between the IP and mainboard IMU
+
+  getSingleQuatData(quatData, imuArr[THUMB].imuCS_pins[TIP]); quat2Euler(quatData, &eulerAng[0], &yaw[0]); 
+  getSingleQuatData(quatData, imuArr[THUMB].imuCS_pins[MID]); quat2Euler(quatData, &eulerAng[1], &yaw[0]); 
+
+  if(eulerAng[1] > eulerAng[0])
+  {
+    result[1] = (360 - eulerAng[1]) + eulerAng[0];
+  }
+  else
+  {
+    result[1] = eulerAng[0] - eulerAng[1];
+  }
+
+  result[2] = 0;
+
+  getYawAng(fingerNum);
+
+  getSingleQuatData(quatData, imuArr[PALM].imuCS_pins[TIP]); quat2Euler(quatData, &eulerAng[0], &yaw2);
+ 
+  eulerAng[0] = eulerAng[0] - 180;
+  if(eulerAng[0] < 0)
+  {
+    eulerAng[0] = 360 + eulerAng[0];
+  }
+
+  
+  Serial.print(fingerNum);Serial.print(" ");
+  for(uint8_t i = 0; i < 3; i++)
+  {
+    Serial.print(result[i]);  Serial.print(" ");
+  }
+  Serial.print(yawAngleGlobal[fingerNum]); Serial.print(" ");
+  Serial.println(eulerAng[0]);  //tilt of mainboard
+}
+
+/**
+ * @brief Calculate the joint angles for a single flex PCB strip using quaternions
+ * 
+ * @param fingerNum - Chooses which finger strip is read
+ */
+void calculateStripJnts(uint8_t fingerNum){
+  // data output = finger strip num, jointAng1(tip), jointAng2(mid), jointAng3(base), yawAngle, palmRollAng 
+
+  float quatData[4], quatData2[4], eulerAng[2], result[3], yaw[3], yaw2, sum = 0;
+
+  for(uint8_t i = 0; i < 3; i++)
+  {
+    getSingleQuatData(quatData, jointArr[fingerNum][i].adjacentIMU_cs[0]); quat2Euler(quatData, &eulerAng[0], &yaw[i]);
+    getSingleQuatData(quatData2, jointArr[fingerNum][i].adjacentIMU_cs[1]);  quat2Euler(quatData2, &eulerAng[1], &yaw2);
+
+    if(i == 2)
+    {
+      eulerAng[1] = eulerAng[1] + 180;  //The IMU on the mainboard and the IMU on the strips are facing opposite directions
+      
+    }
+
+    //Change the angle range from -180->+180 to 0->360
+    if(eulerAng[1] > eulerAng[0])
+    {
+      result[i] = (360 - eulerAng[1]) + eulerAng[0];
+    }
+    else
+    {
+      result[i] = eulerAng[0] - eulerAng[1];
+    }
+
+  }
+
+  getYawAng(fingerNum);
+
+  getSingleQuatData(quatData, imuArr[PALM].imuCS_pins[TIP]); quat2Euler(quatData, &eulerAng[0], &yaw2);
+ 
+  eulerAng[0] = eulerAng[0] - 180;
+  if(eulerAng[0] < 0)
+  {
+    eulerAng[0] = 360 + eulerAng[0];
+  }
+
+  
+  Serial.print(fingerNum);Serial.print(" ");
+  for(uint8_t i = 0; i < 3; i++)
+  {
+    Serial.print(result[i]);Serial.print(" ");
+  }
+  Serial.print(yawAngleGlobal[fingerNum]); Serial.print(" ");
+  Serial.println(eulerAng[0]);  //tilt of mainboard
+  
+  
+  //print statements for datastreamer (datastream uses a comma to separate values)
+  
+  /*
+  Serial.print(fingerNum);  Serial.print(",");
+  for(uint8_t i = 0; i < 3; i++)
+  {
+    Serial.print(result[i]);Serial.print(",");
+  }
+  Serial.print(yawAngleGlobal[fingerNum]); Serial.print(",");
+  Serial.print(eulerAng[0]);  Serial.print(",");  //tilt of mainboard
+  */
+  
+}
+
+
+/**
+  * @brief Get joint angles for multiple flex PCB strips using quaternions
+  */
+void calculateMultStripJnts(){
+  calculateThumbStripJnts();
+  calculateStripJnts(INDEX);
+  calculateStripJnts(MIDDLE);
+  calculateStripJnts(RING);
+  calculateStripJnts(PINKIE);
+  //Serial.println("");
+}
+
+/**
+ * @brief Sends a signal to excel data streamer to record data
+ * 
+ * @param fingerNum 
+ * @param jointNum 
+ */
+void angMeasurementTest(uint8_t fingerNum, uint8_t jointNum){
+  //ask the user to input a value into the serial monitor stating the angle (e.g. 0 (0 won't work), 10 ,20)
+  Serial.print("Enter in the reference Angle: ");
+  uint8_t numOfPrints = 0;
+  uint8_t serialData;
+
+  while(1)
+  {
+    numOfPrints = 0;
+    if(Serial.available() > 0)
+    {
+      serialData = Serial.parseInt();
+    }
+    //Serial.print(Serial.parseInt());
+
+    if(serialData != 0)
+    {
+      if(serialData == 100) //for 0 degrees
+      {
+        serialData = 0;
+      }
+      //Serial.print("Reference Ang: ");  Serial.println(serialData);
+
+      while(numOfPrints < 20)
+      {
+        printSingleJoint(fingerNum, jointNum, serialData, &numOfPrints);
+        //Serial.println(numOfPrints);
+      }
+      serialData = 0;
+      //Serial.println("Out of loop");
+      //Serial.print("Enter in the reference Angle: ");
+    }
+  }
+  
+}
+
+void stationaryTest(){  //prints out all joint angles for a specific number of seconds
+  uint8_t serialData = 0, numOfPrints = 0; 
+  uint16_t samplingInterval = 3e3;
+
+  Serial.print("Enter any value except 0 to start ");
+  while(1)
+  {
+    if(Serial.available() > 0)
+    {
+      serialData = Serial.read();
+    }
+
+    if(serialData != 0)
+    {
+      
+      while(1) //stay in loop until the num of prints has been reached
+      {
+        if(sinceTestTime2 > samplingInterval)  //sampling interval
+        {
+          sinceTestTime2 = 0;
+          calculateMultStripJnts();
+          numOfPrints++;
+        }
+        if(numOfPrints == 11)
+        {
+          sinceTestTime = 0;
+          serialData = 0;
+          break;
+        }
+        
+        //Serial.println("Started");
+      }
+
+      //Serial.println("Finished");
+      
+    }
+  }
+}
+
 
 void loop() {
+
+  //=================================================GRAVITY VECTOR FUNCTIONS=======================================================
   int16_t fifoOut[4];
   float outVals[40][2], jointAng[2];  //outvals is to store pitch and roll
   int gyrOutput;
 
-  //=========================reading joints=============================
-    //readSingleIMUstripJoint(fifoOut, outVals, jointAng, PINKIE);
-    readMultiIMUstripJoints(fifoOut, outVals, jointAng);  //data is output in this order: fingerNum jointAng1 jointAng2 jointAng3 
-  //====================================================================
-  
-  //====================reading individual IMUS=========================
-    //readSingleIMUstrip(fifoOut, outVals, INDEX); 
-    //readSingleIMUstripPrint(fifoOut, outVals, INDEX);
-    //readSingleIMU(fifoOut, outVals, PALM, TIP); //readSingleIMU(fifoOut, outVals, INDEX, TIP);
-    //readMultiIMUstrips(fifoOut, outVals);
-    //fifoSPIManual();
-  //====================================================================
+    //====================reading joints (gravity vector)=================
+      //readSingleIMUstripJoint(fifoOut, outVals, jointAng, PINKIE);
+      //readSingleIMUstripJoint(fifoOut, outVals, jointAng, RING);
+      //readSingleIMUstripJoint(fifoOut, outVals, jointAng, MIDDLE);
+      //readSingleIMUstripJoint(fifoOut, outVals, jointAng, INDEX);
+      //readMultiIMUstripJoints(fifoOut, outVals, jointAng);  //data is output in this order: fingerNum jointAng1 jointAng2 jointAng3 
+    //====================================================================
 
-  //===Functions for AccGyro only======
-    //getYawAng();
-  //===================================
+    //====================reading individual IMUS=========================
+      //readSingleIMUstrip(fifoOut, outVals, INDEX); 
+      //readSingleIMUstripPrint(fifoOut, outVals, MIDDLE);
+      //readSingleIMU(fifoOut, outVals, PALM, TIP); //readSingleIMU(fifoOut, outVals, INDEX, TIP);
+      //readMultiIMUstrips(fifoOut, outVals);
+    //====================================================================
+
+    //===Functions for AccGyro only======
+      //getYawAng(INDEX);
+    //===================================
+
+  
+  //=================================================================================================================================
+
+
+  //=================================================QUATERNION FUNCTIONS=======================================================
+  //float quatData[4], quatData2[4], eulerAng[2], result;
+  uint8_t numOfPrints;
+
+    //readSingleIMUQuat(INDEX, MID);  //readSingleIMUQuat(MIDDLE, TIP);
+    //calculateStripJnts(RING); //calculateStripJnts(INDEX);
+    calculateMultStripJnts();
+    //printSingleJoint(INDEX, PIP, 0, &numOfPrints);
+    
+    //calculateMultStripJnts();
+    //quats2Joint(quatData2, quatData, ROLL);
+
+    //Test functions
+      //angMeasurementTest(INDEX, PIP);
+      //stationaryTest();
+
+  //=================================================================================================================================
+  
 }
+
+
+
+
